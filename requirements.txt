@@ -1,0 +1,10 @@
+# Core app
+Pillow
+
+# Default background removal backend
+rembg
+onnxruntime-gpu
+
+# Optional backends
+withoutbg
+transparent-background

@@ -1,0 +1,31 @@
+# Python/runtime
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# App caches and local UI state
+.ui_cache/
+ui_layout.json
+image_overrides.json
+
+# Generated outputs
+*.pdf
+*.PDF
+pagina_*.png
+page_*.png
+
+# Local/editor files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs/temp
+*.log
+*.tmp
+*.bak
