@@ -3,4 +3,4 @@ Pillow
 
 # Default background removal backend.
 # Keep this base file small for packaging. Advanced backends are optional.
-rembg
+rembg[cpu]

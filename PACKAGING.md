@@ -29,7 +29,7 @@ python -m pip install -r requirements.txt
 
 The base dependency set intentionally does not include `withoutbg`, `transparent-background`, or `torch`.
 
-It also avoids `onnxruntime-gpu`; use `requirements-rembg-gpu.txt` only when you want GPU ONNX Runtime support in a local runtime.
+It uses `rembg[cpu]` so a clean install has a working ONNX Runtime provider. It avoids `onnxruntime-gpu`; use `requirements-rembg-gpu.txt` only when you want GPU ONNX Runtime support in a local runtime.
 
 ## Optional Backends
 
