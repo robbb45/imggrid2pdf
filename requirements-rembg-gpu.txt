@@ -1,0 +1,6 @@
+# Optional GPU runtime for rembg / ONNX Runtime.
+# Install only when you want GPU background removal in a local dev/runtime env.
+onnxruntime-gpu
+nvidia-cudnn-cu12
+nvidia-cublas-cu12
+nvidia-cuda-nvrtc-cu12

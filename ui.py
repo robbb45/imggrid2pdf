@@ -122,7 +122,7 @@ class PDFSheetUI:
         self.page_zoom = 1.0
         self.suspend_trace = False
         self.global_cfg = dict(self.config)
-        self.cache_root = self.script_dir / ".ui_cache"
+        self.cache_root = script.CACHE_ROOT
         self.rembg_cache_dir = self.cache_root / "rembg"
         self.pages_cache_dir = self.cache_root / "pages"
         self.figures_cache_dir = self.cache_root / "figures"
@@ -172,7 +172,8 @@ class PDFSheetUI:
             label="Sobre Cache",
             command=lambda: messagebox.showinfo(
                 "Sobre Cache",
-                "O app usa cache de remoção de fundo e páginas em .ui_cache.\n"
+                "O app usa a pasta cache ao lado do programa para remoção de fundo e páginas.\n"
+                "Modelos baixados ficam na pasta models e dependências opcionais ficam em deps.\n"
                 "Limpe pelo menu Ferramentas se necessário.",
             ),
         )
@@ -272,15 +273,15 @@ class PDFSheetUI:
             "cor_borda": "Cor da borda de recorte da imagem.",
             "cor_numero": "Cor do texto do número.",
             "cor_fundo_janela": "Cor de fundo da janela principal.",
-            "limiar_alpha": "Pixels com alpha <= este valor são tratados como fundo.",
-            "tolerancia_fundo": "Tolerância de cor para detectar fundo conectado às bordas.",
+            "limiar_alpha": "Controle prático do recorte em imagens com transparência. Aumente quando sobra uma borda/halo transparente ao redor da figura. Diminua se partes suaves, cabelo, sombras ou detalhes finos estão sendo cortados.",
+            "tolerancia_fundo": "Controle prático para cortar fundo branco/quase branco conectado às bordas. Aumente quando sobra fundo claro ao redor da figura. Diminua se o recorte começa a comer partes claras da ilustração.",
             "remover_fundo_modo": "Modo do rembg: todos, apenas nomes com RBG, ou desligado.",
             "backend_remocao_fundo": "Backend de remoção de fundo: rembg, withoutbg ou inspyrenet.",
             "modelo_remocao_fundo": "Modelo do backend rembg. Exemplos: birefnet-general-lite, birefnet-general, bria-rmbg, u2net.",
             "modo_inspyrenet": "Modo do backend InSPyReNet/transparent-background.",
             "inspyrenet_device": "Dispositivo do backend InSPyReNet: auto, cuda ou cpu.",
-            "rembg_alpha_matting": "Ativa alpha matting no rembg. Mais refinado, porém mais lento.",
-            "rembg_post_process_mask": "Aplica pós-processamento da máscara no rembg.",
+            "rembg_alpha_matting": "Refina as bordas da máscara no rembg, tentando preservar transições suaves como cabelo, tecido fino, sombras e anti-aliasing. Use quando a borda fica dura/serrilhada. Pode ficar mais lento e às vezes criar halos.",
+            "rembg_post_process_mask": "Limpa a máscara depois da remoção do fundo. Use quando aparecem pequenos pontos soltos, buracos ou sujeira na transparência. Desligue se ele estiver apagando detalhes finos.",
             "rembg_foreground_threshold": "Threshold de primeiro plano do alpha matting do rembg.",
             "rembg_background_threshold": "Threshold de fundo do alpha matting do rembg.",
             "rembg_erode_size": "Tamanho de erosão usado no alpha matting do rembg.",
@@ -555,17 +556,21 @@ class PDFSheetUI:
         cb_modelo.grid(row=0, column=1, sticky="ew", pady=3)
         self._bind_tooltip(cb_modelo, "modelo_remocao_fundo")
         self.vars["rembg_alpha_matting"] = tk.BooleanVar(value=bool(self.config.get("rembg_alpha_matting", False)))
-        ttk.Checkbutton(
+        chk_alpha = ttk.Checkbutton(
             self.backend_rembg_frame,
             text="Alpha matting",
             variable=self.vars["rembg_alpha_matting"],
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=3)
+        )
+        chk_alpha.grid(row=1, column=0, columnspan=2, sticky="w", pady=3)
+        self._bind_tooltip(chk_alpha, "rembg_alpha_matting", apply_all=True)
         self.vars["rembg_post_process_mask"] = tk.BooleanVar(value=bool(self.config.get("rembg_post_process_mask", False)))
-        ttk.Checkbutton(
+        chk_post = ttk.Checkbutton(
             self.backend_rembg_frame,
             text="Post-process mask",
             variable=self.vars["rembg_post_process_mask"],
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=3)
+        )
+        chk_post.grid(row=2, column=0, columnspan=2, sticky="w", pady=3)
+        self._bind_tooltip(chk_post, "rembg_post_process_mask", apply_all=True)
         make_apply_all_label(self.backend_rembg_frame, "FG threshold", "rembg_foreground_threshold", 3)
         self.vars["rembg_foreground_threshold"] = tk.IntVar(value=int(self.config.get("rembg_foreground_threshold", 240)))
         fg_frame = ttk.Frame(self.backend_rembg_frame)
@@ -952,22 +957,39 @@ class PDFSheetUI:
 
     def _instalar_backend_windows(self, backend):
         backend = str(backend).strip().lower()
-        pacote = {
-            "rembg": "rembg[gpu]",
-            "withoutbg": "withoutbg",
-            "inspyrenet": "transparent-background",
+        pacotes = {
+            "rembg": [
+                "rembg",
+                "onnxruntime-gpu",
+                "nvidia-cudnn-cu12",
+                "nvidia-cublas-cu12",
+                "nvidia-cuda-nvrtc-cu12",
+            ],
+            "withoutbg": ["withoutbg"],
+            "inspyrenet": ["transparent-background"],
         }.get(backend)
-        if not pacote:
+        destino = script.BACKEND_DEPS.get(backend)
+        if not pacotes or destino is None:
             messagebox.showerror("Erro", f"Backend desconhecido: {backend}")
             return
 
-        self.status_var.set(f"Instalando backend {backend}...")
+        destino.mkdir(parents=True, exist_ok=True)
+        self.status_var.set(f"Instalando backend {backend} em {destino}...")
         try:
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "install",
+                    "--upgrade",
+                    "--target",
+                    str(destino),
+                    *pacotes,
+                ],
+                check=True,
+            )
             if backend == "inspyrenet":
-                subprocess.run(
-                    [sys.executable, "-m", "pip", "install", pacote],
-                    check=True,
-                )
                 self.status_var.set("Instalando PyTorch CUDA para InSPyReNet...")
                 subprocess.run(
                     [
@@ -976,7 +998,8 @@ class PDFSheetUI:
                         "pip",
                         "install",
                         "--upgrade",
-                        "--force-reinstall",
+                        "--target",
+                        str(destino),
                         "--index-url",
                         "https://download.pytorch.org/whl/cu128",
                         "torch==2.11.0+cu128",
@@ -985,18 +1008,16 @@ class PDFSheetUI:
                     ],
                     check=True,
                 )
-            else:
-                subprocess.run(
-                    [sys.executable, "-m", "pip", "install", pacote],
-                    check=True,
-                )
         except Exception as exc:
             messagebox.showerror("Erro", f"Falha ao instalar {backend}.\n\n{exc}")
             self.status_var.set(f"Falha ao instalar backend {backend}.")
             return
 
         self.status_var.set(f"Backend {backend} instalado.")
-        messagebox.showinfo("Concluído", f"Backend {backend} instalado com sucesso.")
+        messagebox.showinfo(
+            "Concluído",
+            f"Backend {backend} instalado em:\n{destino}\n\nReinicie o app para carregar novas dependências.",
+        )
 
     def _baixar_modelo_backend(self, cfg):
         backend = script.obter_backend_remocao_fundo(cfg)

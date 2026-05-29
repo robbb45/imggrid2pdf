@@ -4,10 +4,40 @@ import ntpath
 import os
 import re
 import site
+import sys
 import tempfile
 import threading
 from collections import deque
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+
+APP_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+MODELS_ROOT = APP_ROOT / "models"
+CACHE_ROOT = APP_ROOT / "cache"
+DEPS_ROOT = APP_ROOT / "deps"
+BACKEND_DEPS = {
+    "rembg": DEPS_ROOT / "rembg",
+    "withoutbg": DEPS_ROOT / "withoutbg",
+    "inspyrenet": DEPS_ROOT / "inspyrenet",
+}
+
+
+def preparar_ambiente_portatil():
+    MODELS_ROOT.mkdir(parents=True, exist_ok=True)
+    CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+    DEPS_ROOT.mkdir(parents=True, exist_ok=True)
+
+    for pasta in BACKEND_DEPS.values():
+        if pasta.exists():
+            site.addsitedir(str(pasta))
+
+    os.environ.setdefault("U2NET_HOME", str(MODELS_ROOT / "rembg"))
+    os.environ.setdefault("TORCH_HOME", str(MODELS_ROOT / "torch"))
+    os.environ.setdefault("HF_HOME", str(MODELS_ROOT / "huggingface"))
+    os.environ.setdefault("XDG_CACHE_HOME", str(CACHE_ROOT / "xdg"))
+    os.environ.setdefault("ONNX_HOME", str(MODELS_ROOT / "onnx"))
+
+
+preparar_ambiente_portatil()
 
 try:
     from rembg import remove as rembg_remove
@@ -549,12 +579,16 @@ def preparar_paths_nvidia_dll():
 
     _NVIDIA_DLL_PATHS_PREPARADOS = True
 
-    raiz_user_site = site.getusersitepackages()
-    pastas = [
-        Path(raiz_user_site) / "nvidia" / "cudnn" / "bin",
-        Path(raiz_user_site) / "nvidia" / "cublas" / "bin",
-        Path(raiz_user_site) / "nvidia" / "cuda_nvrtc" / "bin",
-    ]
+    raizes = [Path(site.getusersitepackages())]
+    raizes.extend(p for p in BACKEND_DEPS.values() if p.exists())
+
+    pastas = []
+    for raiz in raizes:
+        pastas.extend([
+            raiz / "nvidia" / "cudnn" / "bin",
+            raiz / "nvidia" / "cublas" / "bin",
+            raiz / "nvidia" / "cuda_nvrtc" / "bin",
+        ])
 
     path_atual = os.environ.get("PATH", "")
     itens_path = [p for p in path_atual.split(";") if p]

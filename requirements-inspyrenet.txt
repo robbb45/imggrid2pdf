@@ -1,0 +1,5 @@
+# Optional backend: InSPyReNet via transparent-background
+transparent-background
+
+# Install CUDA PyTorch separately with:
+# python -m pip install --index-url https://download.pytorch.org/whl/cu128 torch==2.11.0+cu128 torchvision==0.26.0+cu128 torchaudio==2.11.0+cu128

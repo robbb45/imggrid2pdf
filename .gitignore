@@ -10,6 +10,9 @@ env/
 
 # App caches and local UI state
 .ui_cache/
+cache/
+models/
+deps/
 ui_layout.json
 image_overrides.json
 
