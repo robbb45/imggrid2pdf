@@ -1,5 +1,5 @@
 {
-  "pasta_imagens": "fase 1",
+  "pasta_imagens": "test",
   "arquivo_saida_pdf": "material_figuras_A4_horizontal.pdf",
   "figuras_por_pagina": 6,
   "orientacao": "horizontal",

@@ -13,6 +13,7 @@ env/
 cache/
 models/
 deps/
+test/
 ui_layout.json
 image_overrides.json
 
