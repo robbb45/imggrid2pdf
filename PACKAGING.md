@@ -27,7 +27,7 @@ Use `requirements.txt` for the base app:
 python -m pip install -r requirements.txt
 ```
 
-The base dependency set intentionally does not include `withoutbg`, `transparent-background`, or `torch`.
+The base dependency set includes `rembg[cpu]` and `withoutbg`. It intentionally does not include `transparent-background` or `torch`.
 
 It uses `rembg[cpu]` so a clean install has a working ONNX Runtime provider. It avoids `onnxruntime-gpu`; use `requirements-rembg-gpu.txt` only when you want GPU ONNX Runtime support in a local runtime.
 
@@ -39,7 +39,7 @@ The UI install button installs optional backends into:
 deps/<backend>/
 ```
 
-This avoids installing Torch or other heavy packages globally. Restart the app after installing an optional backend so Python can load the new dependency folder.
+This avoids installing Torch or other heavy packages globally. Restart the app after installing an optional backend so Python can load the new dependency folder. `withoutbg` is included in the normal base install, but its model files still download into `models/` on demand.
 
 ## InSPyReNet / Torch
 

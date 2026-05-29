@@ -121,6 +121,7 @@ class PDFSheetUI:
         self.page_preview_meta = None
         self.page_zoom = 1.0
         self.suspend_trace = False
+        self.backend_guard_active = False
         self.global_cfg = dict(self.config)
         self.cache_root = script.CACHE_ROOT
         self.rembg_cache_dir = self.cache_root / "rembg"
@@ -133,6 +134,8 @@ class PDFSheetUI:
         self.raw_cache_dir.mkdir(parents=True, exist_ok=True)
         self.overrides_file = self.script_dir / "image_overrides.json"
         self.layout_file = self.script_dir / "ui_layout.json"
+        self.model_markers_file = script.MODELS_ROOT / "prepared_backends.json"
+        self.model_markers = self._load_model_markers()
 
         self.preview_original_ref = None
         self.preview_crop_ref = None
@@ -748,6 +751,11 @@ class PDFSheetUI:
             self.vars["backend_remocao_fundo"].trace_add("write", self._on_backend_ui_changed)
         except Exception:
             pass
+        for key in ("modelo_remocao_fundo", "modo_inspyrenet", "inspyrenet_device"):
+            try:
+                self.vars[key].trace_add("write", self._on_backend_ui_changed)
+            except Exception:
+                pass
         self._update_backend_specific_controls()
         self._load_layout_state()
         self.root.bind("<ButtonRelease-1>", self._on_layout_changed)
@@ -807,6 +815,9 @@ class PDFSheetUI:
 
     def _on_backend_ui_changed(self, *_):
         self._update_backend_specific_controls()
+        if self.suspend_trace or self.backend_guard_active:
+            return
+        self.root.after(80, self._ensure_selected_backend_ready)
 
     def _update_backend_specific_controls(self):
         backend = str(self.vars.get("backend_remocao_fundo").get() if self.vars.get("backend_remocao_fundo") else "rembg")
@@ -820,6 +831,106 @@ class PDFSheetUI:
                 self.backend_inspy_frame.grid()
             else:
                 self.backend_inspy_frame.grid_remove()
+
+    def _load_model_markers(self):
+        try:
+            if self.model_markers_file.exists():
+                with open(self.model_markers_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                return data if isinstance(data, dict) else {}
+        except Exception:
+            pass
+        return {}
+
+    def _save_model_markers(self):
+        try:
+            self.model_markers_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.model_markers_file, "w", encoding="utf-8") as f:
+                json.dump(self.model_markers, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
+
+    def _backend_signature(self, cfg):
+        backend = script.obter_backend_remocao_fundo(cfg)
+        if backend == "rembg":
+            return f"rembg:{script.obter_modelo_remocao_fundo(cfg)}"
+        if backend == "inspyrenet":
+            return f"inspyrenet:{script.obter_modo_inspyrenet(cfg)}:{script.obter_dispositivo_inspyrenet(cfg)}"
+        return backend
+
+    @staticmethod
+    def _backend_package_available(backend):
+        if backend == "rembg":
+            return script.rembg_remove is not None and script.rembg_new_session is not None
+        if backend == "withoutbg":
+            return script.WithoutBG is not None
+        if backend == "inspyrenet":
+            return script.InSPyReNetRemover is not None
+        return False
+
+    def _set_selected_backend_default(self):
+        self.backend_guard_active = True
+        self.suspend_trace = True
+        try:
+            if "backend_remocao_fundo" in self.vars:
+                self.vars["backend_remocao_fundo"].set("rembg")
+            if "modelo_remocao_fundo" in self.vars:
+                self.vars["modelo_remocao_fundo"].set("birefnet-general-lite")
+        finally:
+            self.suspend_trace = False
+            self.backend_guard_active = False
+            self._update_backend_specific_controls()
+        self._on_config_change()
+
+    def _ensure_selected_backend_ready(self):
+        if self.backend_guard_active:
+            return
+        cfg = self._collect_vars_as_cfg()
+        backend = script.obter_backend_remocao_fundo(cfg)
+        assinatura = self._backend_signature(cfg)
+
+        if not self._backend_package_available(backend):
+            if not messagebox.askyesno(
+                "Backend não instalado",
+                f"O backend '{backend}' ainda não está instalado.\n\nInstalar agora em:\n{script.BACKEND_DEPS.get(backend)}?",
+            ):
+                self._set_selected_backend_default()
+                return
+            if not self._instalar_backend_windows(backend):
+                self._set_selected_backend_default()
+                return
+            self._set_selected_backend_default()
+            messagebox.showinfo(
+                "Reinicie o app",
+                "O backend foi instalado. Reinicie o app antes de selecioná-lo novamente.",
+            )
+            return
+
+        if self.model_markers.get(assinatura):
+            return
+
+        if not messagebox.askyesno(
+            "Modelo não preparado",
+            f"O backend/modelo selecionado ainda não foi preparado:\n{assinatura}\n\nBaixar/preparar agora?",
+        ):
+            self._set_selected_backend_default()
+            return
+
+        self.status_var.set(f"Preparando {assinatura}...")
+        try:
+            ok = script.baixar_backend_remocao_fundo(cfg)
+        except Exception as exc:
+            messagebox.showerror("Erro", f"Falha ao preparar backend/modelo.\n\n{exc}")
+            ok = False
+
+        if ok:
+            self.model_markers[assinatura] = True
+            self._save_model_markers()
+            self.status_var.set(f"{assinatura} pronto para uso.")
+            return
+
+        messagebox.showwarning("Aviso", f"Não foi possível preparar {assinatura}. Voltando ao padrão.")
+        self._set_selected_backend_default()
 
     def _show_apply_all_hint(self, key):
         if self.apply_all_hint_after_id is not None:
@@ -971,7 +1082,7 @@ class PDFSheetUI:
         destino = script.BACKEND_DEPS.get(backend)
         if not pacotes or destino is None:
             messagebox.showerror("Erro", f"Backend desconhecido: {backend}")
-            return
+            return False
 
         destino.mkdir(parents=True, exist_ok=True)
         self.status_var.set(f"Instalando backend {backend} em {destino}...")
@@ -1011,13 +1122,14 @@ class PDFSheetUI:
         except Exception as exc:
             messagebox.showerror("Erro", f"Falha ao instalar {backend}.\n\n{exc}")
             self.status_var.set(f"Falha ao instalar backend {backend}.")
-            return
+            return False
 
         self.status_var.set(f"Backend {backend} instalado.")
         messagebox.showinfo(
             "Concluído",
             f"Backend {backend} instalado em:\n{destino}\n\nReinicie o app para carregar novas dependências.",
         )
+        return True
 
     def _baixar_modelo_backend(self, cfg):
         backend = script.obter_backend_remocao_fundo(cfg)
@@ -1029,6 +1141,8 @@ class PDFSheetUI:
             self.status_var.set("Falha ao baixar modelo.")
             return
         if ok:
+            self.model_markers[self._backend_signature(cfg)] = True
+            self._save_model_markers()
             self.status_var.set(f"Modelo do backend {backend} pronto para uso.")
             messagebox.showinfo("Concluído", f"Modelo do backend {backend} baixado/preparado.")
         else:

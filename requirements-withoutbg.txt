@@ -1,2 +1,4 @@
-# Optional backend: withoutbg
+# Optional/repair install for withoutbg.
+# The base requirements already include this backend, but this file is useful
+# if you intentionally build a smaller custom runtime and want to add it later.
 withoutbg

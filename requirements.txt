@@ -4,3 +4,6 @@ Pillow
 # Default background removal backend.
 # Keep this base file small for packaging. Advanced backends are optional.
 rembg[cpu]
+
+# Built-in alternative backend. Model files are still downloaded on demand.
+withoutbg
