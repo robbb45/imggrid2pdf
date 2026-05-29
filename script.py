@@ -213,9 +213,9 @@ def natural_key(texto):
 
     for parte in partes:
         if parte.isdigit():
-            chave.append(int(parte))
+            chave.append((0, int(parte)))
         else:
-            chave.append(parte)
+            chave.append((1, parte))
 
     return chave
 
@@ -990,7 +990,9 @@ def main():
     overrides = carregar_overrides_imagem()
 
     pasta_script = Path(__file__).resolve().parent
-    pasta_imagens = pasta_script / config["pasta_imagens"]
+    pasta_imagens = Path(config["pasta_imagens"])
+    if not pasta_imagens.is_absolute():
+        pasta_imagens = pasta_script / pasta_imagens
     arquivo_saida = pasta_script / config["arquivo_saida_pdf"]
     if bool(config.get("evitar_sobrescrever_pdf", True)):
         arquivo_saida = obter_caminho_saida_disponivel(arquivo_saida)

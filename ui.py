@@ -764,7 +764,11 @@ class PDFSheetUI:
     def _pick_folder(self):
         folder = filedialog.askdirectory(initialdir=str(self.script_dir))
         if folder:
-            rel = str(Path(folder).relative_to(self.script_dir)) if Path(folder).is_relative_to(self.script_dir) else folder
+            folder_path = Path(folder)
+            try:
+                rel = str(folder_path.relative_to(self.script_dir))
+            except ValueError:
+                rel = str(folder_path)
             self.global_cfg["pasta_imagens"] = rel
             self._save_config()
             self._sync_global_sidebar_vars()
@@ -1044,7 +1048,9 @@ class PDFSheetUI:
 
     def _open_images_folder(self):
         cfg = self._get_config_ui()
-        pasta = self.script_dir / cfg["pasta_imagens"]
+        pasta = Path(cfg["pasta_imagens"])
+        if not pasta.is_absolute():
+            pasta = self.script_dir / pasta
         try:
             os.startfile(str(pasta))
         except Exception as exc:
@@ -1526,7 +1532,9 @@ class PDFSheetUI:
 
     def _load_images(self):
         cfg = self._get_config_ui()
-        pasta = self.script_dir / cfg["pasta_imagens"]
+        pasta = Path(cfg["pasta_imagens"])
+        if not pasta.is_absolute():
+            pasta = self.script_dir / pasta
         if not pasta.exists():
             self.imagens = []
             self.listbox.delete(0, tk.END)
