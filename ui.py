@@ -158,6 +158,7 @@ class PDFSheetUI:
         menubar = tk.Menu(self.root)
         menu_arquivo = tk.Menu(menubar, tearoff=0)
         menu_arquivo.add_command(label="Configurações Globais...", command=self._open_global_settings_dialog)
+        menu_arquivo.add_command(label="Escolher Pasta de Imagens...", command=self._pick_folder)
         menu_arquivo.add_command(label="Abrir Pasta de Imagens", command=self._open_images_folder)
         menu_arquivo.add_separator()
         menu_arquivo.add_command(label="Sair", command=self.root.destroy)
@@ -765,6 +766,8 @@ class PDFSheetUI:
         if folder:
             rel = str(Path(folder).relative_to(self.script_dir)) if Path(folder).is_relative_to(self.script_dir) else folder
             self.global_cfg["pasta_imagens"] = rel
+            self._save_config()
+            self._sync_global_sidebar_vars()
             self._reload_everything()
 
     def _apply_param_to_other_images(self, key, value=None):
