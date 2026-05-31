@@ -106,6 +106,7 @@ CONFIG_PADRAO = {
     "limiar_branco": 245,
     "limiar_alpha": 10,
     "tolerancia_fundo": 18,
+    "limite_lado_processamento": 2000,
 
     # "todos" (padrão): aplica remoção de fundo em todas as imagens
     # "tag_rbg": aplica só quando o nome tiver "RBG"
@@ -229,6 +230,24 @@ def listar_imagens(pasta):
 
     arquivos.sort(key=lambda p: natural_key(p.stem))
     return arquivos
+
+
+def reduzir_para_processamento(img, config):
+    limite = int(config.get("limite_lado_processamento", 2000))
+    if limite <= 0:
+        return img.convert("RGBA")
+
+    img_rgba = img.convert("RGBA")
+    maior_lado = max(img_rgba.size)
+    if maior_lado <= limite:
+        return img_rgba
+
+    escala = limite / maior_lado
+    novo_tamanho = (
+        max(1, int(round(img_rgba.width * escala))),
+        max(1, int(round(img_rgba.height * escala))),
+    )
+    return img_rgba.resize(novo_tamanho, Image.LANCZOS)
 
 
 def listar_modelos_rembg_disponiveis():
@@ -860,6 +879,7 @@ def preparar_figura(caminho_imagem, tamanho_quadrado, config, overrides=None):
     )
 
     with Image.open(caminho_imagem) as img:
+        img = reduzir_para_processamento(img, config_figura)
         img = aplicar_remocao_fundo(img, caminho_imagem, config_figura)
         img = cortar_espacos_brancos(img, config_figura)
         img = transformar_em_quadrado_com_margem(

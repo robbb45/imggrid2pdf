@@ -41,7 +41,7 @@ IMAGE_OVERRIDE_KEYS = (
     "posicao_padrao_numero",
 )
 
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 3
 
 
 class ToolTip:
@@ -279,6 +279,7 @@ class PDFSheetUI:
             "cor_fundo_janela": "Cor de fundo da janela principal.",
             "limiar_alpha": "Controle prático do recorte em imagens com transparência. Aumente quando sobra uma borda/halo transparente ao redor da figura. Diminua se partes suaves, cabelo, sombras ou detalhes finos estão sendo cortados.",
             "tolerancia_fundo": "Controle prático para cortar fundo branco/quase branco conectado às bordas. Aumente quando sobra fundo claro ao redor da figura. Diminua se o recorte começa a comer partes claras da ilustração.",
+            "limite_lado_processamento": "Reduz imagens grandes antes de remover fundo, recortar e gerar previews. Use 2000 para boa qualidade e velocidade em A4; aumente para máxima qualidade; use 0 para nunca reduzir.",
             "remover_fundo_modo": "Modo do rembg: todos, apenas nomes com RBG, ou desligado.",
             "backend_remocao_fundo": "Backend de remoção de fundo: rembg, withoutbg ou inspyrenet.",
             "modelo_remocao_fundo": "Modelo do backend rembg. Exemplos: birefnet-general-lite, birefnet-general, bria-rmbg, u2net.",
@@ -349,6 +350,7 @@ class PDFSheetUI:
         add_global_slider("Margem externa", "margem_externa", 2, 0, 250)
         add_global_slider("Espaço horizontal", "espaco_horizontal", 3, 0, 160)
         add_global_slider("Espaço vertical", "espaco_vertical", 4, 0, 160)
+        add_global_slider("Máx lado imagem", "limite_lado_processamento", 5, 0, 4096)
 
         for var in self.global_sidebar_vars.values():
             try:
@@ -1233,6 +1235,7 @@ class PDFSheetUI:
             ("cor_fundo_janela", "Cor fundo janela"),
             ("limiar_alpha", "Limiar alpha"),
             ("tolerancia_fundo", "Tolerância fundo"),
+            ("limite_lado_processamento", "Máx lado processamento"),
             ("remover_fundo_modo", "Remover fundo"),
             ("backend_remocao_fundo", "Backend fundo"),
         ]
@@ -1512,7 +1515,7 @@ class PDFSheetUI:
         try:
             for key, var in self.global_sidebar_vars.items():
                 val = var.get()
-                if key in ("figuras_por_pagina", "margem_externa", "espaco_horizontal", "espaco_vertical"):
+                if key in ("figuras_por_pagina", "margem_externa", "espaco_horizontal", "espaco_vertical", "limite_lado_processamento"):
                     self.global_cfg[key] = int(float(val))
                 else:
                     self.global_cfg[key] = str(val)
@@ -1699,7 +1702,7 @@ class PDFSheetUI:
                     raw_disk = self._load_raw_cache_disk(raw_key)
                     if raw_disk is None:
                         with Image.open(imagem) as im:
-                            original = im.convert("RGBA")
+                            original = script.reduzir_para_processamento(im, cfg_img)
                             rembg_key = self._rembg_cache_key(imagem, cfg_img)
                             rembg_cached = self.rembg_cache.get(rembg_key)
                             if rembg_cached is None:
@@ -1973,7 +1976,7 @@ class PDFSheetUI:
             raw_disk = self._load_raw_cache_disk(raw_key)
             if raw_disk is None:
                 with Image.open(caminho) as im:
-                    original = im.convert("RGBA")
+                    original = script.reduzir_para_processamento(im, cfg_img)
                     rembg_key = self._rembg_cache_key(caminho, cfg_img)
                     rembg_cached = self.rembg_cache.get(rembg_key)
                     if rembg_cached is None:
@@ -2145,6 +2148,7 @@ class PDFSheetUI:
             int(cfg.get("rembg_erode_size", 10)),
             int(cfg.get("limiar_alpha", 10)),
             int(cfg.get("tolerancia_fundo", 18)),
+            int(cfg.get("limite_lado_processamento", 2000)),
         )
 
     @staticmethod
@@ -2166,6 +2170,7 @@ class PDFSheetUI:
             int(cfg.get("rembg_erode_size", 10)),
             int(cfg.get("limiar_alpha", 10)),
             int(cfg.get("tolerancia_fundo", 18)),
+            int(cfg.get("limite_lado_processamento", 2000)),
         )
 
     def _page_cache_key(self, cfg: dict):
@@ -2200,6 +2205,7 @@ class PDFSheetUI:
             int(cfg.get("numero_glow_opacidade", 220)),
             int(cfg.get("limiar_alpha", 10)),
             int(cfg.get("tolerancia_fundo", 18)),
+            int(cfg.get("limite_lado_processamento", 2000)),
             str(cfg.get("backend_remocao_fundo", "rembg")),
             str(cfg.get("remover_fundo_modo", "todos")),
             str(cfg.get("modelo_remocao_fundo", "birefnet-general-lite")),
@@ -2225,6 +2231,7 @@ class PDFSheetUI:
             int(cfg.get("rembg_erode_size", 10)),
             int(cfg.get("limiar_alpha", 10)),
             int(cfg.get("tolerancia_fundo", 18)),
+            int(cfg.get("limite_lado_processamento", 2000)),
             float(cfg.get("margem_interna_quadrado", 0.06)),
             int(cfg.get("borda_preta_espessura", 8)),
             float(cfg.get("tamanho_numero_relativo", 0.085)),
@@ -2255,6 +2262,7 @@ class PDFSheetUI:
             int(cfg.get("rembg_foreground_threshold", 240)),
             int(cfg.get("rembg_background_threshold", 10)),
             int(cfg.get("rembg_erode_size", 10)),
+            int(cfg.get("limite_lado_processamento", 2000)),
         )
 
     def _rembg_cache_file(self, key):
@@ -2317,6 +2325,7 @@ class PDFSheetUI:
             "rembg_erode_size": int(cfg.get("rembg_erode_size", 10)),
             "limiar_alpha": int(cfg.get("limiar_alpha", 10)),
             "tolerancia_fundo": int(cfg.get("tolerancia_fundo", 18)),
+            "limite_lado_processamento": int(cfg.get("limite_lado_processamento", 2000)),
             "remover_fundo_modo": str(cfg.get("remover_fundo_modo", "todos")),
             "modelo_remocao_fundo": str(cfg.get("modelo_remocao_fundo", "birefnet-general-lite")),
             "modo_inspyrenet": str(cfg.get("modo_inspyrenet", "base")),

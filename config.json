@@ -21,6 +21,7 @@
   "limiar_branco": 245,
   "limiar_alpha": 10,
   "tolerancia_fundo": 18,
+  "limite_lado_processamento": 2000,
   "remover_fundo_modo": "tag_rbg",
   "backend_remocao_fundo": "rembg",
   "modelo_remocao_fundo": "birefnet-general",
