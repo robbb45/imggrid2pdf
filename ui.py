@@ -350,7 +350,6 @@ class PDFSheetUI:
         add_global_slider("Margem externa", "margem_externa", 2, 0, 250)
         add_global_slider("Espaço horizontal", "espaco_horizontal", 3, 0, 160)
         add_global_slider("Espaço vertical", "espaco_vertical", 4, 0, 160)
-        add_global_slider("Máx lado imagem", "limite_lado_processamento", 5, 0, 4096)
 
         for var in self.global_sidebar_vars.values():
             try:
