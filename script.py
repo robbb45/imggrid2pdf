@@ -362,7 +362,7 @@ def listar_dispositivos_inspyrenet():
 
 
 def listar_estilos_borda():
-    return ["solida", "tracejada"]
+    return ["solida", "tracejada", "pontilhada", "traco_ponto"]
 
 
 def obter_backend_remocao_fundo(config):
@@ -874,38 +874,58 @@ def desenhar_borda_preta(img_rgba, config):
     if espessura <= 0:
         return
 
-    if estilo == "tracejada":
-        dash = max(8, espessura * 3)
-        gap = max(4, espessura * 2)
+    if estilo in ("tracejada", "pontilhada", "traco_ponto"):
+        if estilo == "pontilhada":
+            dash_pattern = [max(2, espessura), max(3, espessura * 2)]
+        elif estilo == "traco_ponto":
+            dash_pattern = [
+                max(8, espessura * 3),
+                max(4, espessura * 2),
+                max(2, espessura),
+                max(4, espessura * 2),
+            ]
+        else:
+            dash_pattern = [max(8, espessura * 3), max(4, espessura * 2)]
 
-        def draw_dashed_line(x1, y1, x2, y2):
+        def draw_patterned_line(x1, y1, x2, y2):
             horizontal = y1 == y2
             if horizontal:
                 start = min(x1, x2)
                 end = max(x1, x2)
                 pos = start
+                pattern_idx = 0
                 while pos < end:
-                    seg_end = min(pos + dash, end)
-                    draw.line((pos, y1, seg_end, y2), fill=cor_borda, width=espessura)
-                    pos += dash + gap
+                    length = dash_pattern[pattern_idx % len(dash_pattern)]
+                    seg_end = min(pos + length, end)
+                    if pattern_idx % 2 == 0:
+                        draw.line((pos, y1, seg_end, y2), fill=cor_borda, width=espessura)
+                    pos += length
+                    pattern_idx += 1
             else:
                 start = min(y1, y2)
                 end = max(y1, y2)
                 pos = start
+                pattern_idx = 0
                 while pos < end:
-                    seg_end = min(pos + dash, end)
-                    draw.line((x1, pos, x2, seg_end), fill=cor_borda, width=espessura)
-                    pos += dash + gap
+                    length = dash_pattern[pattern_idx % len(dash_pattern)]
+                    seg_end = min(pos + length, end)
+                    if pattern_idx % 2 == 0:
+                        draw.line((x1, pos, x2, seg_end), fill=cor_borda, width=espessura)
+                    pos += length
+                    pattern_idx += 1
 
-        def draw_dashed_arc(bbox, start_angle, end_angle):
-            total = abs(end_angle - start_angle)
-            step_angle = max(8, int(360 * dash / max(1, 2 * 3.14159 * max(raio, 1))))
-            gap_angle = max(5, int(360 * gap / max(1, 2 * 3.14159 * max(raio, 1))))
+        def draw_patterned_arc(bbox, start_angle, end_angle):
+            circumference = max(1, 2 * 3.14159 * max(raio, 1))
             angle = start_angle
+            pattern_idx = 0
             while angle < end_angle:
-                seg_end = min(angle + step_angle, end_angle)
-                draw.arc(bbox, start=angle, end=seg_end, fill=cor_borda, width=espessura)
-                angle += step_angle + gap_angle
+                length = dash_pattern[pattern_idx % len(dash_pattern)]
+                angle_step = max(3, int(360 * length / circumference))
+                seg_end = min(angle + angle_step, end_angle)
+                if pattern_idx % 2 == 0:
+                    draw.arc(bbox, start=angle, end=seg_end, fill=cor_borda, width=espessura)
+                angle += angle_step
+                pattern_idx += 1
 
         inset = espessura // 2
         left = inset
@@ -913,19 +933,19 @@ def desenhar_borda_preta(img_rgba, config):
         right = w - 1 - inset
         bottom = h - 1 - inset
         if raio > 0:
-            draw_dashed_line(left + raio, top, right - raio, top)
-            draw_dashed_line(left + raio, bottom, right - raio, bottom)
-            draw_dashed_line(left, top + raio, left, bottom - raio)
-            draw_dashed_line(right, top + raio, right, bottom - raio)
-            draw_dashed_arc((left, top, left + 2 * raio, top + 2 * raio), 180, 270)
-            draw_dashed_arc((right - 2 * raio, top, right, top + 2 * raio), 270, 360)
-            draw_dashed_arc((right - 2 * raio, bottom - 2 * raio, right, bottom), 0, 90)
-            draw_dashed_arc((left, bottom - 2 * raio, left + 2 * raio, bottom), 90, 180)
+            draw_patterned_line(left + raio, top, right - raio, top)
+            draw_patterned_line(left + raio, bottom, right - raio, bottom)
+            draw_patterned_line(left, top + raio, left, bottom - raio)
+            draw_patterned_line(right, top + raio, right, bottom - raio)
+            draw_patterned_arc((left, top, left + 2 * raio, top + 2 * raio), 180, 270)
+            draw_patterned_arc((right - 2 * raio, top, right, top + 2 * raio), 270, 360)
+            draw_patterned_arc((right - 2 * raio, bottom - 2 * raio, right, bottom), 0, 90)
+            draw_patterned_arc((left, bottom - 2 * raio, left + 2 * raio, bottom), 90, 180)
         else:
-            draw_dashed_line(left, top, right, top)
-            draw_dashed_line(left, bottom, right, bottom)
-            draw_dashed_line(left, top, left, bottom)
-            draw_dashed_line(right, top, right, bottom)
+            draw_patterned_line(left, top, right, top)
+            draw_patterned_line(left, bottom, right, bottom)
+            draw_patterned_line(left, top, left, bottom)
+            draw_patterned_line(right, top, right, bottom)
         return
 
     draw.rounded_rectangle(
