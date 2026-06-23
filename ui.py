@@ -357,6 +357,7 @@ class PDFSheetUI:
         self.apply_all_group_keys = {
             "borda_preta_espessura": ("borda_preta_espessura", "cor_borda"),
             "estilo_borda": ("estilo_borda", "raio_borda"),
+            "tamanho_numero_relativo": ("tamanho_numero_relativo", "cor_numero"),
         }
 
         status_box = ttk.Frame(painel_cfg)
