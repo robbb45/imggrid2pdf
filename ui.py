@@ -30,6 +30,8 @@ IMAGE_OVERRIDE_KEYS = (
     "tolerancia_fundo",
     "margem_interna_quadrado",
     "borda_preta_espessura",
+    "estilo_borda",
+    "raio_borda",
     "tamanho_numero_relativo",
     "padding_numero",
     "caixa_numero_padding_x",
@@ -291,6 +293,8 @@ class PDFSheetUI:
             "espaco_horizontal": "Espaço horizontal entre células da grade (em pixels).",
             "espaco_vertical": "Espaço vertical entre células da grade (em pixels).",
             "borda_preta_espessura": "Espessura da borda preta para recorte em cada célula (em pixels).",
+            "estilo_borda": "Estilo da borda de recorte da imagem: sólida ou tracejada.",
+            "raio_borda": "Arredondamento dos cantos da borda de recorte (em pixels).",
             "margem_interna_quadrado": "Margem interna da imagem dentro do quadrado (0.00 a 0.25).",
             "tamanho_numero_relativo": "Tamanho do número relativo ao tamanho da célula.",
             "padding_numero": "Distância do número em relação à borda interna da célula.",
@@ -323,6 +327,8 @@ class PDFSheetUI:
 
         self.apply_all_label_keys = {
             "borda_preta_espessura",
+            "estilo_borda",
+            "raio_borda",
             "margem_interna_quadrado",
             "tamanho_numero_relativo",
             "padding_numero",
@@ -504,6 +510,28 @@ class PDFSheetUI:
             var.trace_add("write", sync)
             self._bind_tooltip(swatch, key)
 
+        def add_inline_combo(frame, key, values, width=10):
+            var = self.vars.get(key)
+            if var is None:
+                var = tk.StringVar(value=str(self.config.get(key, script.CONFIG_PADRAO.get(key, ""))))
+                self.vars[key] = var
+            cb = ttk.Combobox(frame, textvariable=var, values=values, state="readonly", width=width)
+            next_col = frame.grid_size()[0]
+            cb.grid(row=0, column=next_col, padx=(8, 0), sticky="w")
+            self._bind_tooltip(cb, key)
+            return cb
+
+        def add_inline_spin(frame, key, frm, to, width=4):
+            var = self.vars.get(key)
+            if var is None:
+                var = tk.IntVar(value=int(self.config.get(key, script.CONFIG_PADRAO.get(key, 0))))
+                self.vars[key] = var
+            sp = ttk.Spinbox(frame, from_=frm, to=to, textvariable=var, width=width)
+            next_col = frame.grid_size()[0]
+            sp.grid(row=0, column=next_col, padx=(8, 0), sticky="w")
+            self._bind_tooltip(sp, key)
+            return sp
+
         def add_float(label, key, row):
             make_apply_all_label(painel_cfg, label, key, row)
             var = tk.DoubleVar(value=float(self.config.get(key, 0.0)))
@@ -522,6 +550,14 @@ class PDFSheetUI:
 
         frame_borda = add_slider_int("Borda preta", "borda_preta_espessura", row, 1, 30, apply_all=True)
         add_inline_color(frame_borda, "cor_borda")
+        lbl_estilo = ttk.Label(frame_borda, text="Estilo")
+        lbl_estilo.grid(row=0, column=3, padx=(10, 2), sticky="e")
+        self._bind_tooltip(lbl_estilo, "estilo_borda")
+        add_inline_combo(frame_borda, "estilo_borda", script.listar_estilos_borda(), width=10)
+        lbl_raio = ttk.Label(frame_borda, text="Raio")
+        lbl_raio.grid(row=0, column=5, padx=(10, 2), sticky="e")
+        self._bind_tooltip(lbl_raio, "raio_borda")
+        add_inline_spin(frame_borda, "raio_borda", 0, 120, width=5)
         row += 1
         add_slider_float("Margem interna", "margem_interna_quadrado", row, 0.0, 0.25, apply_all=True)
         row += 1
@@ -1634,6 +1670,8 @@ class PDFSheetUI:
             ("espaco_horizontal", "Espaço horizontal"),
             ("espaco_vertical", "Espaço vertical"),
             ("borda_preta_espessura", "Borda preta"),
+            ("estilo_borda", "Estilo borda"),
+            ("raio_borda", "Raio borda"),
             ("margem_interna_quadrado", "Margem interna"),
             ("tamanho_numero_relativo", "Tamanho número"),
             ("padding_numero", "Padding número"),
@@ -1655,12 +1693,13 @@ class PDFSheetUI:
         row = 0
         for key, label in keys:
             ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", pady=3)
-            if key in ("orientacao", "remover_fundo_modo", "figuras_por_pagina", "backend_remocao_fundo", "modelo_remocao_fundo", "modo_inspyrenet"):
+            if key in ("orientacao", "remover_fundo_modo", "figuras_por_pagina", "backend_remocao_fundo", "modelo_remocao_fundo", "modo_inspyrenet", "estilo_borda"):
                 v = tk.StringVar(value=str(self.global_cfg.get(key, script.CONFIG_PADRAO.get(key, ""))))
                 values = {
                     "orientacao": ["horizontal", "vertical"],
                     "remover_fundo_modo": ["todos", "tag_rbg", "desligado"],
                     "figuras_por_pagina": ["12", "9", "6", "4"],
+                    "estilo_borda": script.listar_estilos_borda(),
                     "backend_remocao_fundo": script.listar_backends_remocao_fundo(),
                     "modelo_remocao_fundo": script.listar_modelos_rembg_disponiveis() or ["birefnet-general-lite", "birefnet-general", "bria-rmbg", "u2net"],
                     "modo_inspyrenet": script.listar_modos_inspyrenet(),
@@ -3033,6 +3072,8 @@ class PDFSheetUI:
             str(numero),
             str(posicao),
             int(cfg_img.get("borda_preta_espessura", 8)),
+            str(cfg_img.get("estilo_borda", "solida")),
+            int(cfg_img.get("raio_borda", 0)),
             float(cfg_img.get("margem_interna_quadrado", 0.06)),
             float(cfg_img.get("tamanho_numero_relativo", 0.085)),
             int(cfg_img.get("padding_numero", 10)),
@@ -3282,6 +3323,8 @@ class PDFSheetUI:
             int(cfg.get("limite_lado_processamento", 2000)),
             float(cfg.get("margem_interna_quadrado", 0.06)),
             int(cfg.get("borda_preta_espessura", 8)),
+            str(cfg.get("estilo_borda", "solida")),
+            int(cfg.get("raio_borda", 0)),
             float(cfg.get("tamanho_numero_relativo", 0.085)),
             int(cfg.get("padding_numero", 10)),
             int(cfg.get("caixa_numero_padding_x", 10)),
@@ -3357,6 +3400,8 @@ class PDFSheetUI:
             "posicao": str(posicao),
             "margem_interna_quadrado": float(cfg.get("margem_interna_quadrado", 0.06)),
             "borda_preta_espessura": int(cfg.get("borda_preta_espessura", 8)),
+            "estilo_borda": str(cfg.get("estilo_borda", "solida")),
+            "raio_borda": int(cfg.get("raio_borda", 0)),
             "tamanho_numero_relativo": float(cfg.get("tamanho_numero_relativo", 0.085)),
             "padding_numero": int(cfg.get("padding_numero", 10)),
             "caixa_numero_padding_x": int(cfg.get("caixa_numero_padding_x", 10)),

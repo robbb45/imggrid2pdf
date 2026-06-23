@@ -139,6 +139,8 @@ CONFIG_PADRAO = {
     "espaco_vertical": 30,
 
     "borda_preta_espessura": 8,
+    "estilo_borda": "solida",
+    "raio_borda": 0,
     "cor_borda": "#000000",
     "cor_numero": "#000000",
     "margem_interna_quadrado": 0.06,
@@ -357,6 +359,10 @@ def listar_modos_inspyrenet():
 
 def listar_dispositivos_inspyrenet():
     return ["auto", "cuda", "cpu"]
+
+
+def listar_estilos_borda():
+    return ["solida", "tracejada"]
 
 
 def obter_backend_remocao_fundo(config):
@@ -855,16 +861,79 @@ def transformar_em_quadrado_com_margem(img_rgba, tamanho_saida, config):
 
 def desenhar_borda_preta(img_rgba, config):
     espessura = int(config["borda_preta_espessura"])
+    estilo = str(config.get("estilo_borda", "solida")).strip().lower()
+    if estilo not in listar_estilos_borda():
+        estilo = "solida"
+    raio = max(0, int(config.get("raio_borda", 0)))
     cor_borda = str(config.get("cor_borda", "#000000"))
 
     draw = ImageDraw.Draw(img_rgba)
     w, h = img_rgba.size
+    raio = min(raio, max(0, (min(w, h) // 2) - 1))
 
-    for i in range(espessura):
-        draw.rectangle(
-            [i, i, w - 1 - i, h - 1 - i],
-            outline=cor_borda
-        )
+    if espessura <= 0:
+        return
+
+    if estilo == "tracejada":
+        dash = max(8, espessura * 3)
+        gap = max(4, espessura * 2)
+
+        def draw_dashed_line(x1, y1, x2, y2):
+            horizontal = y1 == y2
+            if horizontal:
+                start = min(x1, x2)
+                end = max(x1, x2)
+                pos = start
+                while pos < end:
+                    seg_end = min(pos + dash, end)
+                    draw.line((pos, y1, seg_end, y2), fill=cor_borda, width=espessura)
+                    pos += dash + gap
+            else:
+                start = min(y1, y2)
+                end = max(y1, y2)
+                pos = start
+                while pos < end:
+                    seg_end = min(pos + dash, end)
+                    draw.line((x1, pos, x2, seg_end), fill=cor_borda, width=espessura)
+                    pos += dash + gap
+
+        def draw_dashed_arc(bbox, start_angle, end_angle):
+            total = abs(end_angle - start_angle)
+            step_angle = max(8, int(360 * dash / max(1, 2 * 3.14159 * max(raio, 1))))
+            gap_angle = max(5, int(360 * gap / max(1, 2 * 3.14159 * max(raio, 1))))
+            angle = start_angle
+            while angle < end_angle:
+                seg_end = min(angle + step_angle, end_angle)
+                draw.arc(bbox, start=angle, end=seg_end, fill=cor_borda, width=espessura)
+                angle += step_angle + gap_angle
+
+        inset = espessura // 2
+        left = inset
+        top = inset
+        right = w - 1 - inset
+        bottom = h - 1 - inset
+        if raio > 0:
+            draw_dashed_line(left + raio, top, right - raio, top)
+            draw_dashed_line(left + raio, bottom, right - raio, bottom)
+            draw_dashed_line(left, top + raio, left, bottom - raio)
+            draw_dashed_line(right, top + raio, right, bottom - raio)
+            draw_dashed_arc((left, top, left + 2 * raio, top + 2 * raio), 180, 270)
+            draw_dashed_arc((right - 2 * raio, top, right, top + 2 * raio), 270, 360)
+            draw_dashed_arc((right - 2 * raio, bottom - 2 * raio, right, bottom), 0, 90)
+            draw_dashed_arc((left, bottom - 2 * raio, left + 2 * raio, bottom), 90, 180)
+        else:
+            draw_dashed_line(left, top, right, top)
+            draw_dashed_line(left, bottom, right, bottom)
+            draw_dashed_line(left, top, left, bottom)
+            draw_dashed_line(right, top, right, bottom)
+        return
+
+    draw.rounded_rectangle(
+        [espessura // 2, espessura // 2, w - 1 - (espessura // 2), h - 1 - (espessura // 2)],
+        radius=raio,
+        outline=cor_borda,
+        width=espessura,
+    )
 
 
 def desenhar_numero_com_glow(img_rgba, texto, posicao, config):
