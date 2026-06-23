@@ -510,25 +510,25 @@ class PDFSheetUI:
             var.trace_add("write", sync)
             self._bind_tooltip(swatch, key)
 
-        def add_inline_combo(frame, key, values, width=10):
+        def add_inline_combo(frame, key, values, width=10, row=0, column=None):
             var = self.vars.get(key)
             if var is None:
                 var = tk.StringVar(value=str(self.config.get(key, script.CONFIG_PADRAO.get(key, ""))))
                 self.vars[key] = var
             cb = ttk.Combobox(frame, textvariable=var, values=values, state="readonly", width=width)
-            next_col = frame.grid_size()[0]
-            cb.grid(row=0, column=next_col, padx=(8, 0), sticky="w")
+            next_col = frame.grid_size()[0] if column is None else column
+            cb.grid(row=row, column=next_col, padx=(8, 0), sticky="w")
             self._bind_tooltip(cb, key)
             return cb
 
-        def add_inline_spin(frame, key, frm, to, width=4):
+        def add_inline_spin(frame, key, frm, to, width=4, row=0, column=None):
             var = self.vars.get(key)
             if var is None:
                 var = tk.IntVar(value=int(self.config.get(key, script.CONFIG_PADRAO.get(key, 0))))
                 self.vars[key] = var
             sp = ttk.Spinbox(frame, from_=frm, to=to, textvariable=var, width=width)
-            next_col = frame.grid_size()[0]
-            sp.grid(row=0, column=next_col, padx=(8, 0), sticky="w")
+            next_col = frame.grid_size()[0] if column is None else column
+            sp.grid(row=row, column=next_col, padx=(8, 0), sticky="w")
             self._bind_tooltip(sp, key)
             return sp
 
@@ -550,14 +550,16 @@ class PDFSheetUI:
 
         frame_borda = add_slider_int("Borda preta", "borda_preta_espessura", row, 1, 30, apply_all=True)
         add_inline_color(frame_borda, "cor_borda")
-        lbl_estilo = ttk.Label(frame_borda, text="Estilo")
-        lbl_estilo.grid(row=0, column=3, padx=(10, 2), sticky="e")
-        self._bind_tooltip(lbl_estilo, "estilo_borda")
-        add_inline_combo(frame_borda, "estilo_borda", script.listar_estilos_borda(), width=10)
-        lbl_raio = ttk.Label(frame_borda, text="Raio")
-        lbl_raio.grid(row=0, column=5, padx=(10, 2), sticky="e")
+        row += 1
+        lbl_estilo_borda = make_apply_all_label(painel_cfg, "Estilo borda", "estilo_borda", row)
+        frame_estilo_borda = ttk.Frame(painel_cfg)
+        frame_estilo_borda.grid(row=row, column=1, sticky="w", pady=3)
+        add_inline_combo(frame_estilo_borda, "estilo_borda", script.listar_estilos_borda(), width=12, row=0, column=0)
+        lbl_raio = ttk.Label(frame_estilo_borda, text="Raio")
+        lbl_raio.grid(row=0, column=1, padx=(10, 2), sticky="e")
+        self._bind_tooltip(lbl_estilo_borda, "estilo_borda")
         self._bind_tooltip(lbl_raio, "raio_borda")
-        add_inline_spin(frame_borda, "raio_borda", 0, 120, width=5)
+        add_inline_spin(frame_estilo_borda, "raio_borda", 0, 120, width=5, row=0, column=2)
         row += 1
         add_slider_float("Margem interna", "margem_interna_quadrado", row, 0.0, 0.25, apply_all=True)
         row += 1
@@ -1801,7 +1803,7 @@ class PDFSheetUI:
                     val = v.get()
                     if k in ("margem_interna_quadrado", "tamanho_numero_relativo"):
                         novo[k] = float(val)
-                    elif k in ("pasta_imagens", "arquivo_saida_pdf", "orientacao", "remover_fundo_modo", "cor_borda", "cor_numero", "cor_fundo_janela", "backend_remocao_fundo", "modelo_remocao_fundo", "modo_inspyrenet", "inspyrenet_device"):
+                    elif k in ("pasta_imagens", "arquivo_saida_pdf", "orientacao", "remover_fundo_modo", "cor_borda", "cor_numero", "cor_fundo_janela", "backend_remocao_fundo", "modelo_remocao_fundo", "modo_inspyrenet", "inspyrenet_device", "estilo_borda"):
                         novo[k] = str(val)
                     elif k in ("rembg_alpha_matting", "rembg_post_process_mask"):
                         novo[k] = bool(val)
@@ -2577,7 +2579,7 @@ class PDFSheetUI:
         try:
             for key, var in self.global_sidebar_vars.items():
                 val = var.get()
-                if key in ("figuras_por_pagina", "margem_externa", "espaco_horizontal", "espaco_vertical", "limite_lado_processamento"):
+                if key in ("figuras_por_pagina", "margem_externa", "espaco_horizontal", "espaco_vertical", "limite_lado_processamento", "raio_borda"):
                     self.global_cfg[key] = int(float(val))
                 else:
                     self.global_cfg[key] = str(val)
@@ -3207,6 +3209,8 @@ class PDFSheetUI:
             int(cfg.get("tolerancia_fundo", 18)),
             float(cfg.get("margem_interna_quadrado", 0.06)),
             int(cfg.get("borda_preta_espessura", 8)),
+            str(cfg.get("estilo_borda", "solida")),
+            int(cfg.get("raio_borda", 0)),
             float(cfg.get("tamanho_numero_relativo", 0.085)),
             int(cfg.get("padding_numero", 10)),
             int(cfg.get("caixa_numero_padding_x", 10)),
