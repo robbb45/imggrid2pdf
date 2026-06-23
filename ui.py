@@ -347,6 +347,9 @@ class PDFSheetUI:
             "rembg_background_threshold",
             "rembg_erode_size",
         }
+        self.apply_all_group_keys = {
+            "borda_preta_espessura": ("borda_preta_espessura", "cor_borda"),
+        }
 
         status_box = ttk.Frame(painel_cfg)
         status_box.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 10))
@@ -1230,12 +1233,16 @@ class PDFSheetUI:
             return
         selected_key = self._image_key(self.imagem_atual)
         cfg_atual = self._collect_vars_as_cfg()
-        if value is None:
-            if key == "remover_fundo_modo":
-                value = cfg_atual.get("remover_fundo_modo", "todos")
+        group_keys = tuple(self.apply_all_group_keys.get(key, (key,)))
+        values = {}
+        for group_key in group_keys:
+            if value is not None and group_key == key:
+                values[group_key] = value
+            elif group_key == "remover_fundo_modo":
+                values[group_key] = cfg_atual.get("remover_fundo_modo", "todos")
             else:
-                value = cfg_atual.get(key)
-        if value is None:
+                values[group_key] = cfg_atual.get(group_key)
+        if any(v is None for v in values.values()):
             return
 
         changed = 0
@@ -1244,7 +1251,8 @@ class PDFSheetUI:
             if image_key == selected_key:
                 continue
             override = dict(self.image_overrides.get(image_key, {}))
-            override[key] = value
+            for group_key, group_value in values.items():
+                override[group_key] = group_value
             self.image_overrides[image_key] = override
             self.dirty_page_images.add(image_key)
             changed += 1
@@ -1257,7 +1265,11 @@ class PDFSheetUI:
             self.raw_cache.clear()
             self.figure_cache.clear()
             self.preview_raw_cache.clear()
-            self.status_var.set(f"Valor de '{key}' aplicado a {changed} outras imagens.")
+            if len(group_keys) > 1:
+                applied = ", ".join(group_keys)
+                self.status_var.set(f"Valores de '{applied}' aplicados a {changed} outras imagens.")
+            else:
+                self.status_var.set(f"Valor de '{key}' aplicado a {changed} outras imagens.")
             self._refresh_all_previews()
 
     def _on_preview_area_resize(self, event):
