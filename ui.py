@@ -250,6 +250,13 @@ class PDFSheetUI:
             sidebar_canvas.itemconfigure(sidebar_frame_id, width=event.width)
 
         def scroll_sidebar(event):
+            widget = getattr(event, "widget", None)
+            try:
+                widget_class = str(widget.winfo_class()) if widget is not None else ""
+            except Exception:
+                widget_class = ""
+            if widget_class in {"TSpinbox", "Spinbox", "TCombobox", "Entry", "TEntry"}:
+                return "break"
             delta = 0
             if getattr(event, "delta", 0):
                 delta = -int(event.delta / 120)
