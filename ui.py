@@ -292,7 +292,7 @@ class PDFSheetUI:
             "margem_externa": "Margem entre a borda da página e a grade de figuras (em pixels).",
             "espaco_horizontal": "Espaço horizontal entre células da grade (em pixels).",
             "espaco_vertical": "Espaço vertical entre células da grade (em pixels).",
-            "borda_preta_espessura": "Espessura da borda preta para recorte em cada célula (em pixels).",
+            "borda_preta_espessura": "Espessura da borda de recorte em cada célula (em pixels).",
             "estilo_borda": "Estilo da borda de recorte da imagem: sólida ou tracejada.",
             "raio_borda": "Arredondamento dos cantos da borda de recorte (em pixels).",
             "margem_interna_quadrado": "Margem interna da imagem dentro do quadrado (0.00 a 0.25).",
@@ -551,7 +551,7 @@ class PDFSheetUI:
 
         row = 2
 
-        frame_borda = add_slider_int("Borda preta", "borda_preta_espessura", row, 1, 30, apply_all=True)
+        frame_borda = add_slider_int("Espessura borda", "borda_preta_espessura", row, 1, 30, apply_all=True)
         add_inline_color(frame_borda, "cor_borda")
         row += 1
         lbl_estilo_borda = make_apply_all_label(painel_cfg, "Estilo borda", "estilo_borda", row)
@@ -1683,7 +1683,7 @@ class PDFSheetUI:
             ("margem_externa", "Margem externa"),
             ("espaco_horizontal", "Espaço horizontal"),
             ("espaco_vertical", "Espaço vertical"),
-            ("borda_preta_espessura", "Borda preta"),
+            ("borda_preta_espessura", "Espessura borda"),
             ("estilo_borda", "Estilo borda"),
             ("raio_borda", "Raio borda"),
             ("margem_interna_quadrado", "Margem interna"),
