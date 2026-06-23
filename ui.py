@@ -349,6 +349,7 @@ class PDFSheetUI:
         }
         self.apply_all_group_keys = {
             "borda_preta_espessura": ("borda_preta_espessura", "cor_borda"),
+            "estilo_borda": ("estilo_borda", "raio_borda"),
         }
 
         status_box = ttk.Frame(painel_cfg)
@@ -413,6 +414,14 @@ class PDFSheetUI:
                 lbl.bind("<Enter>", lambda _e, k=key: self._show_apply_all_hint(k))
                 self._bind_tooltip(lbl, key, apply_all=True)
             return lbl
+
+        def bind_apply_all_widget(widget, key):
+            if key not in self.apply_all_label_keys:
+                self._bind_tooltip(widget, key)
+                return
+            widget.bind("<Double-Button-1>", lambda _e, k=key: self._apply_param_to_other_images(k), add="+")
+            widget.bind("<Enter>", lambda _e, k=key: self._show_apply_all_hint(k), add="+")
+            self._bind_tooltip(widget, key, apply_all=True)
 
         def add_entry(label, key, row):
             lbl = make_apply_all_label(painel_cfg, label, key, row)
@@ -521,7 +530,7 @@ class PDFSheetUI:
             cb = ttk.Combobox(frame, textvariable=var, values=values, state="readonly", width=width)
             next_col = frame.grid_size()[0] if column is None else column
             cb.grid(row=row, column=next_col, padx=(8, 0), sticky="w")
-            self._bind_tooltip(cb, key)
+            bind_apply_all_widget(cb, key)
             return cb
 
         def add_inline_spin(frame, key, frm, to, width=4, row=0, column=None):
@@ -532,7 +541,7 @@ class PDFSheetUI:
             sp = ttk.Spinbox(frame, from_=frm, to=to, textvariable=var, width=width)
             next_col = frame.grid_size()[0] if column is None else column
             sp.grid(row=row, column=next_col, padx=(8, 0), sticky="w")
-            self._bind_tooltip(sp, key)
+            bind_apply_all_widget(sp, key)
             return sp
 
         def add_float(label, key, row):
@@ -1106,7 +1115,7 @@ class PDFSheetUI:
             base, _old_code = self._split_stem_position_code(image.stem)
             new_name = f"{base}_{code}{image.suffix}"
             rename_map[image] = image.with_name(new_name)
-        self._apply_image_renames(rename_map, "Aplicar posição", confirm=False)
+        self._apply_image_renames(rename_map, "Aplicar posição", confirm=False, refresh_page_preview=True)
 
     def _renumber_images(self, all_images: bool):
         targets = list(self.imagens) if all_images else self._selected_images()
@@ -1153,7 +1162,7 @@ class PDFSheetUI:
         }
         self._apply_image_renames(rename_map, "Renomear imagem")
 
-    def _apply_image_renames(self, rename_map, title: str, confirm: bool = True):
+    def _apply_image_renames(self, rename_map, title: str, confirm: bool = True, refresh_page_preview: bool = False):
         changes = [
             (old, new)
             for old, new in rename_map.items()
@@ -1222,11 +1231,16 @@ class PDFSheetUI:
         self.figure_cache.clear()
         self.page_layout_cache = []
         self.paginas_cache = []
+        self.page_preview_meta = None
+        self.preview_pagina_ref = None
+        self.lbl_page.configure(image="")
         self.dirty_page_images = {self._image_key(p) for p in self.imagens}
         self._refresh_image_listbox(selected_after)
         self._on_select_image()
         self._sync_single_rename_field()
         self.status_var.set(f"{len(changes)} arquivo(s) renomeado(s).")
+        if refresh_page_preview:
+            self._render_page_preview_thread()
 
     def _apply_param_to_other_images(self, key, value=None):
         if self.imagem_atual is None or not self.imagens:
