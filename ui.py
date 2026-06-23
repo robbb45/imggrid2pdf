@@ -11,7 +11,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
-from PIL import Image, ImageTk
+from PIL import Image, ImageDraw, ImageTk
 
 import script
 
@@ -93,6 +93,12 @@ class PDFSheetUI:
         self.config_path = self.script_dir / "config.json"
         self.config = script.carregar_config()
         self.config.setdefault("cor_fundo_janela", "#f0f0f0")
+        self.config.setdefault("ultima_pasta_recorte", "")
+        self.config.setdefault("recorte_grade_colunas", 3)
+        self.config.setdefault("recorte_grade_linhas", 2)
+        self.config.setdefault("recorte_grade_inset", 6)
+        self.config.setdefault("recorte_grade_remover_borda", True)
+        self.config.setdefault("recorte_grade_prefixo", "")
 
         self.imagens = []
         self.imagem_atual = None
@@ -113,6 +119,7 @@ class PDFSheetUI:
         self.figure_cache = {}
         self.raw_cache = {}
         self.preview_raw_cache = {}
+        self.image_content_cache = {}
         self.tooltips = []
         self.image_overrides = {}
         self.page_layout_cache = []
@@ -122,6 +129,9 @@ class PDFSheetUI:
         self.page_zoom = 1.0
         self.suspend_trace = False
         self.backend_guard_active = False
+        self.list_drag_index = None
+        self.rename_panel_visible = False
+        self.rename_inline_dirty = False
         self.global_cfg = dict(self.config)
         self.cache_root = script.CACHE_ROOT
         self.rembg_cache_dir = self.cache_root / "rembg"
@@ -146,9 +156,15 @@ class PDFSheetUI:
         self._build_ui()
         self._setup_menu()
         self._apply_window_bg()
+        self.status_var.set("Carregando imagens e preparando prévias...")
+        self.progress.configure(mode="indeterminate")
+        self.progress.start(8)
+        self.root.update_idletasks()
         self._load_overrides()
         self._load_images()
         self._refresh_all_previews()
+        if not self.imagens:
+            self._stop_progress()
 
     @staticmethod
     def _image_key(imagem: Path):
@@ -167,6 +183,7 @@ class PDFSheetUI:
         menu_ferr = tk.Menu(menubar, tearoff=0)
         menu_ferr.add_command(label="Recarregar Imagens", command=self._reload_everything)
         menu_ferr.add_command(label="Renderizar Prévia de Página", command=self._render_page_preview_thread)
+        menu_ferr.add_command(label="Recortar Grade...", command=self._open_sheet_cropper)
         menu_ferr.add_command(label="Resetar Todas as Imagens para Padrão", command=self._reset_all_image_overrides)
         menu_ferr.add_command(label="Limpar Cache", command=self._clear_all_cache)
         menubar.add_cascade(label="Ferramentas", menu=menu_ferr)
@@ -188,6 +205,11 @@ class PDFSheetUI:
         cor = str(self.global_cfg.get("cor_fundo_janela", "#f0f0f0"))
         try:
             self.root.configure(bg=cor)
+        except Exception:
+            pass
+        try:
+            if hasattr(self, "status_label"):
+                self.status_label.configure(bg=cor)
         except Exception:
             pass
 
@@ -320,8 +342,25 @@ class PDFSheetUI:
             "rembg_erode_size",
         }
 
+        status_box = ttk.Frame(painel_cfg)
+        status_box.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+        status_box.columnconfigure(0, weight=1)
+        self.progress = ttk.Progressbar(status_box, orient="horizontal", mode="determinate", maximum=100)
+        self.progress.grid(row=0, column=0, sticky="ew")
+        self.status_var = tk.StringVar(value="Pronto")
+        self.status_label = tk.Label(
+            status_box,
+            textvariable=self.status_var,
+            wraplength=300,
+            justify="left",
+            anchor="nw",
+            height=2,
+            bg=self.global_cfg.get("cor_fundo_janela", "#f0f0f0"),
+        )
+        self.status_label.grid(row=1, column=0, sticky="ew", pady=(3, 0))
+
         global_box = ttk.LabelFrame(painel_cfg, text="Layout da Página")
-        global_box.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+        global_box.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 10))
         global_box.columnconfigure(1, weight=1)
 
         def add_global_combo(label, key, row, values):
@@ -479,7 +518,7 @@ class PDFSheetUI:
             )
             sp.grid(row=row, column=1, sticky="w", pady=3)
 
-        row = 1
+        row = 2
 
         frame_borda = add_slider_int("Borda preta", "borda_preta_espessura", row, 1, 30, apply_all=True)
         add_inline_color(frame_borda, "cor_borda")
@@ -643,11 +682,6 @@ class PDFSheetUI:
         ttk.Button(botoes, text="Atualizar preview", command=self._refresh_all_previews).grid(row=1, column=0, sticky="ew", padx=3, pady=2)
         ttk.Button(botoes, text="Gerar PDF", command=self._gerar_pdf_thread).grid(row=1, column=1, sticky="ew", padx=3, pady=2)
 
-        self.progress = ttk.Progressbar(painel_cfg, orient="horizontal", mode="determinate", maximum=100)
-        self.progress.grid(row=row + 1, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-        self.status_var = tk.StringVar(value="Pronto")
-        ttk.Label(painel_cfg, textvariable=self.status_var).grid(row=row + 2, column=0, columnspan=3, sticky="w")
-
         self.visual_pane = tk.PanedWindow(
             visual,
             orient=tk.VERTICAL,
@@ -662,17 +696,77 @@ class PDFSheetUI:
         topo.columnconfigure(1, weight=1)
         topo.columnconfigure(0, weight=1)
         topo.columnconfigure(2, weight=1)
-        topo.rowconfigure(1, weight=1)
+        topo.rowconfigure(2, weight=1)
 
-        ttk.Label(topo, text="Imagens:").grid(row=0, column=0, sticky="w")
-        self.listbox = tk.Listbox(topo, height=6, exportselection=False)
-        self.listbox.grid(row=1, column=0, columnspan=3, sticky="nsew")
+        header = ttk.Frame(topo)
+        header.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 4))
+        header.columnconfigure(1, weight=1)
+        ttk.Label(header, text="Imagens:").grid(row=0, column=0, sticky="w")
+
+        tools = ttk.Frame(header)
+        tools.grid(row=0, column=1, sticky="e")
+        ttk.Label(tools, text="Ordem").pack(side="left", padx=(0, 4))
+        self.sort_mode_var = tk.StringVar(value="Manual")
+        sort_combo = ttk.Combobox(
+            tools,
+            textvariable=self.sort_mode_var,
+            values=["Manual", "Nome A-Z", "Nome Z-A", "Número"],
+            state="readonly",
+            width=10,
+        )
+        sort_combo.pack(side="left", padx=(0, 4))
+        sort_combo.bind("<<ComboboxSelected>>", lambda _e: self._apply_image_sort())
+        ttk.Button(tools, text="Renomear", command=self._toggle_rename_panel).pack(side="left", padx=(0, 4))
+        for label, code in (("SE", "SE"), ("SD", "SD"), ("IE", "IE"), ("ID", "ID")):
+            btn = ttk.Button(tools, text=label, width=3, command=lambda c=code: self._apply_position_code_to_selected(c))
+            btn.pack(side="left", padx=1)
+            self._bind_static_tooltip(btn, {
+                "SE": "Superior esquerdo",
+                "SD": "Superior direito",
+                "IE": "Inferior esquerdo",
+                "ID": "Inferior direito",
+            }[code])
+
+        self.rename_panel = ttk.Frame(topo)
+        self.rename_panel.columnconfigure(5, weight=1)
+        ttk.Label(self.rename_panel, text="Nome").grid(row=0, column=0, sticky="w", padx=(0, 4))
+        self.rename_single_var = tk.StringVar(value="")
+        self.rename_single_entry = ttk.Entry(self.rename_panel, textvariable=self.rename_single_var, width=24)
+        self.rename_single_entry.grid(row=0, column=1, columnspan=4, sticky="ew", padx=(0, 6))
+        self.rename_single_entry.bind("<Return>", lambda _e: self._rename_selected_image_direct())
+        self.rename_single_entry.bind("<FocusIn>", lambda _e: setattr(self, "rename_inline_dirty", False))
+        self.rename_single_entry.bind("<KeyRelease>", self._on_single_rename_key)
+        self.rename_extension_var = tk.StringVar(value="")
+        ttk.Label(self.rename_panel, textvariable=self.rename_extension_var, width=7).grid(row=0, column=5, sticky="w", padx=(0, 8))
+        ttk.Button(self.rename_panel, text="Aplicar nome", command=self._rename_selected_image_direct).grid(row=0, column=6, sticky="e", padx=2)
+
+        self.rename_padding_var = tk.IntVar(value=2)
+        ttk.Spinbox(self.rename_panel, from_=1, to=6, textvariable=self.rename_padding_var, width=4).grid(row=1, column=1, sticky="w", padx=(0, 8))
+        ttk.Label(self.rename_panel, text="Dígitos").grid(row=1, column=0, sticky="w", padx=(0, 4))
+        ttk.Label(self.rename_panel, text="Início").grid(row=1, column=2, sticky="w", padx=(0, 4))
+        self.rename_start_var = tk.IntVar(value=1)
+        ttk.Spinbox(self.rename_panel, from_=0, to=9999, textvariable=self.rename_start_var, width=6).grid(row=1, column=3, sticky="w", padx=(0, 8))
+        ttk.Label(self.rename_panel, text="Prefixo").grid(row=1, column=4, sticky="w", padx=(0, 4))
+        self.rename_prefix_var = tk.StringVar(value="")
+        ttk.Entry(self.rename_panel, textvariable=self.rename_prefix_var, width=8).grid(row=1, column=5, sticky="ew", padx=(0, 8))
+        ttk.Label(self.rename_panel, text="Sufixo").grid(row=1, column=6, sticky="w", padx=(0, 4))
+        self.rename_suffix_var = tk.StringVar(value="")
+        ttk.Entry(self.rename_panel, textvariable=self.rename_suffix_var, width=8).grid(row=1, column=7, sticky="ew", padx=(0, 8))
+        ttk.Button(self.rename_panel, text="Selecionadas", command=lambda: self._renumber_images(False)).grid(row=1, column=8, sticky="e", padx=2)
+        ttk.Button(self.rename_panel, text="Todas", command=lambda: self._renumber_images(True)).grid(row=1, column=9, sticky="e", padx=2)
+
+        self.listbox = tk.Listbox(topo, height=6, exportselection=False, selectmode=tk.EXTENDED)
+        self.listbox.grid(row=2, column=0, columnspan=3, sticky="nsew")
         self.listbox.bind("<<ListboxSelect>>", lambda e: self._on_select_image())
+        self.listbox.bind("<Double-Button-1>", self._start_inline_rename)
+        self.listbox.bind("<ButtonPress-1>", self._on_listbox_drag_start)
+        self.listbox.bind("<B1-Motion>", self._on_listbox_drag_motion)
+        self.listbox.bind("<ButtonRelease-1>", self._on_listbox_drag_end)
         self.info_img_var = tk.StringVar(value="")
-        ttk.Label(topo, textvariable=self.info_img_var).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ttk.Label(topo, textvariable=self.info_img_var).grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
         b_ov = ttk.Frame(topo)
-        b_ov.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        b_ov.grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
         ttk.Button(b_ov, text="Salvar Ajustes da Imagem em Global", command=self._apply_current_image_to_global).pack(side="left", padx=2)
         ttk.Button(b_ov, text="Limpar Override da Imagem", command=self._clear_image_override).pack(side="left", padx=2)
         ttk.Button(b_ov, text="Resetar Todas", command=self._reset_all_image_overrides).pack(side="left", padx=2)
@@ -761,6 +855,7 @@ class PDFSheetUI:
         self._update_backend_specific_controls()
         self._load_layout_state()
         self.root.bind("<ButtonRelease-1>", self._on_layout_changed)
+        self.root.bind("<F2>", self._start_inline_rename)
 
     def _pick_folder(self):
         folder = filedialog.askdirectory(initialdir=str(self.script_dir))
@@ -774,6 +869,323 @@ class PDFSheetUI:
             self._save_config()
             self._sync_global_sidebar_vars()
             self._reload_everything()
+
+    def _current_images_folder(self):
+        cfg = self._get_config_ui()
+        pasta = Path(cfg["pasta_imagens"])
+        if not pasta.is_absolute():
+            pasta = self.script_dir / pasta
+        return pasta
+
+    def _last_cropper_folder(self):
+        pasta = str(self.global_cfg.get("ultima_pasta_recorte", "") or "").strip()
+        if pasta:
+            path = Path(pasta)
+            if path.exists():
+                return path
+        return self._current_images_folder()
+
+    def _set_last_cropper_folder(self, pasta: Path):
+        try:
+            self.global_cfg["ultima_pasta_recorte"] = str(pasta)
+            self._save_config()
+        except Exception:
+            pass
+
+    def _save_cropper_prefs(self, cols, rows, inset, trim, prefix):
+        try:
+            self.global_cfg["recorte_grade_colunas"] = int(cols)
+            self.global_cfg["recorte_grade_linhas"] = int(rows)
+            self.global_cfg["recorte_grade_inset"] = int(inset)
+            self.global_cfg["recorte_grade_remover_borda"] = bool(trim)
+            self.global_cfg["recorte_grade_prefixo"] = str(prefix)
+            self._save_config()
+        except Exception:
+            pass
+
+    def _toggle_rename_panel(self):
+        self.rename_panel_visible = not self.rename_panel_visible
+        if self.rename_panel_visible:
+            self.rename_panel.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 4))
+            self._sync_single_rename_field()
+            self.info_img_var.set("Use a ordem visível para renumerar. Arraste itens em modo Manual.")
+        else:
+            self.rename_panel.grid_remove()
+
+    def _on_single_rename_key(self, _event=None):
+        self.rename_inline_dirty = True
+
+    def _sync_single_rename_field(self):
+        if not hasattr(self, "rename_single_var"):
+            return
+        if self.imagem_atual is None:
+            self.rename_inline_dirty = False
+            self.rename_single_var.set("")
+            self.rename_extension_var.set("")
+            self.rename_single_entry.state(["disabled"])
+            return
+        self.rename_single_entry.state(["!disabled"])
+        self.rename_inline_dirty = False
+        self.rename_single_var.set(self.imagem_atual.stem)
+        self.rename_extension_var.set(self.imagem_atual.suffix)
+
+    def _start_inline_rename(self, _event=None):
+        if self.imagem_atual is None:
+            return "break"
+        if not self.rename_panel_visible:
+            self.rename_panel_visible = True
+            self.rename_panel.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 4))
+        self._sync_single_rename_field()
+        self.rename_single_entry.focus_set()
+        self.rename_single_entry.selection_range(0, tk.END)
+        return "break"
+
+    def _selected_image_indices(self):
+        if not hasattr(self, "listbox"):
+            return []
+        return [i for i in self.listbox.curselection() if 0 <= i < len(self.imagens)]
+
+    def _selected_images(self):
+        return [self.imagens[i] for i in self._selected_image_indices()]
+
+    def _refresh_image_listbox(self, selected_paths=None):
+        selected_keys = set()
+        if selected_paths:
+            selected_keys = {self._image_key(p) for p in selected_paths}
+        elif self.imagem_atual is not None:
+            selected_keys = {self._image_key(self.imagem_atual)}
+
+        self.listbox.delete(0, tk.END)
+        for p in self.imagens:
+            self.listbox.insert(tk.END, p.name)
+
+        selected_any = False
+        for idx, path in enumerate(self.imagens):
+            if self._image_key(path) in selected_keys:
+                self.listbox.selection_set(idx)
+                self.listbox.see(idx)
+                selected_any = True
+
+        if not selected_any and self.imagens:
+            self.listbox.selection_set(0)
+            self.listbox.see(0)
+
+    def _invalidate_page_order(self):
+        self.page_cache.clear()
+        self.page_layout_cache = []
+        self.page_layout_signature = None
+        self.paginas_cache = []
+        self.dirty_page_images = {self._image_key(p) for p in self.imagens}
+        if bool(self.global_cfg.get("auto_preview_pagina", False)):
+            self._render_page_preview_thread()
+        else:
+            self.page_info_var.set("Página 0/0")
+            self.lbl_page.configure(image="")
+
+    def _apply_image_sort(self):
+        if not self.imagens:
+            return
+        mode = self.sort_mode_var.get()
+        selected = self._selected_images()
+        if mode == "Manual":
+            self.status_var.set("Ordem manual ativa. Arraste as imagens para reorganizar.")
+            return
+        if mode == "Nome Z-A":
+            self.imagens.sort(key=lambda p: script.natural_key(p.name), reverse=True)
+        elif mode == "Número":
+            cfg = self._get_config_ui()
+            self.imagens.sort(key=lambda p: script.natural_key(script.interpretar_nome_arquivo(p, cfg)[0]))
+        else:
+            self.imagens.sort(key=lambda p: script.natural_key(p.name))
+        self._refresh_image_listbox(selected)
+        self._on_select_image()
+        self._invalidate_page_order()
+        self.status_var.set(f"Imagens ordenadas por: {mode}.")
+
+    def _on_listbox_drag_start(self, event):
+        if not self.imagens:
+            return
+        idx = self.listbox.nearest(event.y)
+        if 0 <= idx < len(self.imagens):
+            self.list_drag_index = idx
+            self.sort_mode_var.set("Manual")
+
+    def _on_listbox_drag_motion(self, event):
+        if self.list_drag_index is None or not self.imagens:
+            return
+        new_idx = self.listbox.nearest(event.y)
+        new_idx = max(0, min(len(self.imagens) - 1, new_idx))
+        old_idx = self.list_drag_index
+        if new_idx == old_idx:
+            return
+        moved = self.imagens.pop(old_idx)
+        self.imagens.insert(new_idx, moved)
+        self.list_drag_index = new_idx
+        selected = self._selected_images()
+        self._refresh_image_listbox(selected_paths=selected or [moved])
+        self.listbox.selection_clear(0, tk.END)
+        self.listbox.selection_set(new_idx)
+        self.listbox.see(new_idx)
+        self.imagem_atual = moved
+        self._invalidate_page_order()
+
+    def _on_listbox_drag_end(self, _event):
+        if self.list_drag_index is not None:
+            self.list_drag_index = None
+            self._on_select_image()
+            self.status_var.set("Ordem manual atualizada.")
+
+    @staticmethod
+    def _split_stem_position_code(stem: str):
+        upper = stem.upper()
+        for code in ("SE", "SD", "IE", "ID"):
+            if upper.endswith(f"_{code}") or upper.endswith(f"-{code}"):
+                return stem[:-3].strip("_- "), code
+        for code in ("SE", "SD", "IE", "ID"):
+            if upper.endswith(code) and len(stem) > len(code):
+                return stem[:-len(code)].strip("_- "), code
+        if upper.endswith("_B") or upper.endswith("-B"):
+            return stem[:-2].strip("_- "), "SD"
+        if upper.endswith("B") and len(stem) > 1:
+            return stem[:-1].strip("_- "), "SD"
+        return stem.strip(), ""
+
+    @staticmethod
+    def _filename_part_is_valid(text: str):
+        return "/" not in text and "\\" not in text and "\0" not in text
+
+    def _apply_position_code_to_selected(self, code: str):
+        targets = self._selected_images()
+        if not targets:
+            messagebox.showwarning("Aviso", "Selecione uma ou mais imagens.")
+            return
+
+        rename_map = {}
+        for image in targets:
+            base, _old_code = self._split_stem_position_code(image.stem)
+            new_name = f"{base}_{code}{image.suffix}"
+            rename_map[image] = image.with_name(new_name)
+        self._apply_image_renames(rename_map, "Aplicar posição", confirm=False)
+
+    def _renumber_images(self, all_images: bool):
+        targets = list(self.imagens) if all_images else self._selected_images()
+        if not targets:
+            messagebox.showwarning("Aviso", "Selecione uma ou mais imagens.")
+            return
+
+        try:
+            width = max(1, int(self.rename_padding_var.get()))
+            start = int(self.rename_start_var.get())
+        except Exception:
+            messagebox.showerror("Erro", "Padding e início precisam ser números válidos.")
+            return
+
+        prefix = self.rename_prefix_var.get()
+        suffix = self.rename_suffix_var.get()
+        if not self._filename_part_is_valid(prefix) or not self._filename_part_is_valid(suffix):
+            messagebox.showerror("Erro", "Prefixo e sufixo não podem conter barras.")
+            return
+
+        rename_map = {}
+        for offset, image in enumerate(targets):
+            _base, code = self._split_stem_position_code(image.stem)
+            number = str(start + offset).zfill(width)
+            new_stem = f"{prefix}{number}{suffix}"
+            if code:
+                new_stem = f"{new_stem}_{code}"
+            rename_map[image] = image.with_name(f"{new_stem}{image.suffix}")
+        self._apply_image_renames(rename_map, "Renumerar imagens")
+
+    def _rename_selected_image_direct(self):
+        if self.imagem_atual is None:
+            messagebox.showwarning("Aviso", "Selecione uma imagem.")
+            return
+        new_stem = self.rename_single_var.get().strip()
+        if not new_stem:
+            messagebox.showerror("Erro", "O nome da imagem não pode ficar vazio.")
+            return
+        if not self._filename_part_is_valid(new_stem):
+            messagebox.showerror("Erro", "O nome da imagem não pode conter barras.")
+            return
+        rename_map = {
+            self.imagem_atual: self.imagem_atual.with_name(f"{new_stem}{self.imagem_atual.suffix}")
+        }
+        self._apply_image_renames(rename_map, "Renomear imagem")
+
+    def _apply_image_renames(self, rename_map, title: str, confirm: bool = True):
+        changes = [
+            (old, new)
+            for old, new in rename_map.items()
+            if self._image_key(old) != self._image_key(new)
+        ]
+        if not changes:
+            self.status_var.set("Nenhum arquivo precisava ser renomeado.")
+            return
+
+        target_keys = [self._image_key(new) for _old, new in changes]
+        if len(target_keys) != len(set(target_keys)):
+            messagebox.showerror("Conflito", "Duas ou mais imagens receberiam o mesmo nome.")
+            return
+
+        source_keys = {self._image_key(old) for old, _new in changes}
+        existing_conflicts = [
+            new for _old, new in changes
+            if new.exists() and self._image_key(new) not in source_keys
+        ]
+        if existing_conflicts:
+            preview = "\n".join(p.name for p in existing_conflicts[:8])
+            messagebox.showerror("Conflito", f"Já existem arquivos com estes nomes:\n\n{preview}")
+            return
+
+        if confirm:
+            preview_lines = [f"{old.name} -> {new.name}" for old, new in changes[:10]]
+            extra = "" if len(changes) <= 10 else f"\n... e mais {len(changes) - 10}"
+            if not messagebox.askyesno(title, "Confirmar renomeação?\n\n" + "\n".join(preview_lines) + extra):
+                return
+
+        temp_steps = []
+        completed_temp = []
+        try:
+            for idx, (old, new) in enumerate(changes):
+                temp = old.with_name(f".rename_tmp_{os.getpid()}_{idx}{old.suffix}")
+                counter = 1
+                while temp.exists():
+                    temp = old.with_name(f".rename_tmp_{os.getpid()}_{idx}_{counter}{old.suffix}")
+                    counter += 1
+                old.rename(temp)
+                temp_steps.append((old, temp, new))
+                completed_temp.append((old, temp))
+
+            for old, temp, new in temp_steps:
+                temp.rename(new)
+                old_key = self._image_key(old)
+                new_key = self._image_key(new)
+                if old_key in self.image_overrides:
+                    self.image_overrides[new_key] = self.image_overrides.pop(old_key)
+        except Exception as exc:
+            for old, temp in reversed(completed_temp):
+                try:
+                    if temp.exists() and not old.exists():
+                        temp.rename(old)
+                except Exception:
+                    pass
+            messagebox.showerror("Erro", f"Falha ao renomear arquivos.\n\n{exc}")
+            return
+
+        final_map = {old: new for old, new in changes}
+        selected_after = [final_map.get(p, p) for p in self._selected_images()]
+        self.imagens = [final_map.get(p, p) for p in self.imagens]
+        self._save_overrides()
+        self.preview_cache.clear()
+        self.page_cache.clear()
+        self.figure_cache.clear()
+        self.page_layout_cache = []
+        self.paginas_cache = []
+        self.dirty_page_images = {self._image_key(p) for p in self.imagens}
+        self._refresh_image_listbox(selected_after)
+        self._on_select_image()
+        self._sync_single_rename_field()
+        self.status_var.set(f"{len(changes)} arquivo(s) renomeado(s).")
 
     def _apply_param_to_other_images(self, key, value=None):
         if self.imagem_atual is None or not self.imagens:
@@ -869,11 +1281,11 @@ class PDFSheetUI:
     @staticmethod
     def _backend_package_available(backend):
         if backend == "rembg":
-            return script.rembg_remove is not None and script.rembg_new_session is not None
+            return script.garantir_rembg_importado()
         if backend == "withoutbg":
-            return script.WithoutBG is not None
+            return script.garantir_withoutbg_importado()
         if backend == "inspyrenet":
-            return script.InSPyReNetRemover is not None
+            return script.garantir_inspyrenet_importado()
         return False
 
     def _set_selected_backend_default(self):
@@ -1391,6 +1803,607 @@ class PDFSheetUI:
         ttk.Button(btns, text="Resetar padrões", command=resetar_padrao).pack(side="left", padx=4)
         ttk.Button(btns, text="Cancelar", command=win.destroy).pack(side="left", padx=4)
 
+    def _open_sheet_cropper(self):
+        win = tk.Toplevel(self.root)
+        win.title("Recortar Grade")
+        win.geometry("1320x900+120+70")
+        win.transient(self.root)
+        win.grab_set()
+        win.columnconfigure(0, weight=1)
+        win.rowconfigure(1, weight=1)
+
+        state = {
+            "source_path": None,
+            "image": None,
+            "photo": None,
+            "image_box": None,
+            "crop_box": None,
+            "v_lines": [],
+            "h_lines": [],
+            "drag": None,
+            "cell_offsets": {},
+            "selected_cells": set(),
+            "click_cell": None,
+            "drag_moved": False,
+            "drag_after_id": None,
+            "pending_cell_drag": None,
+        }
+
+        rows_var = tk.IntVar(value=int(self.global_cfg.get("recorte_grade_linhas", 2)))
+        cols_var = tk.IntVar(value=int(self.global_cfg.get("recorte_grade_colunas", 3)))
+        inset_var = tk.IntVar(value=int(self.global_cfg.get("recorte_grade_inset", 6)))
+        trim_var = tk.BooleanVar(value=bool(self.global_cfg.get("recorte_grade_remover_borda", True)))
+        prefix_var = tk.StringVar(value=str(self.global_cfg.get("recorte_grade_prefixo", "")))
+        info_var = tk.StringVar(value="Abra uma imagem e ajuste as linhas de corte.")
+        source_var = tk.StringVar(value="Nenhuma imagem aberta.")
+        export_var = tk.StringVar(value=f"Salvar em: {self._current_images_folder()}")
+
+        top = ttk.Frame(win, padding=10)
+        top.grid(row=0, column=0, sticky="ew")
+        top.columnconfigure(9, weight=1)
+
+        ttk.Button(top, text="Abrir imagem...", command=lambda: choose_source()).grid(row=0, column=0, padx=(0, 8), pady=2, sticky="w")
+        ttk.Label(top, text="Colunas").grid(row=0, column=1, sticky="w")
+        cols_spin = ttk.Spinbox(top, from_=1, to=12, textvariable=cols_var, width=4)
+        cols_spin.grid(row=0, column=2, padx=(4, 10), pady=2, sticky="w")
+        ttk.Label(top, text="Linhas").grid(row=0, column=3, sticky="w")
+        rows_spin = ttk.Spinbox(top, from_=1, to=12, textvariable=rows_var, width=4)
+        rows_spin.grid(row=0, column=4, padx=(4, 10), pady=2, sticky="w")
+        inset_label = ttk.Label(top, text="Inset célula")
+        inset_label.grid(row=0, column=5, sticky="w")
+        inset_spin = ttk.Spinbox(top, from_=0, to=60, textvariable=inset_var, width=5)
+        inset_spin.grid(row=0, column=6, padx=(4, 10), pady=2, sticky="w")
+        trim_check = ttk.Checkbutton(top, text="Remover borda branca da célula", variable=trim_var)
+        trim_check.grid(row=0, column=7, padx=(0, 10), sticky="w")
+        ttk.Button(top, text="Auto detectar", command=lambda: auto_detect_lines()).grid(row=0, column=8, padx=(0, 6), pady=2, sticky="w")
+        ttk.Button(top, text="Distribuir igual", command=lambda: distribute_lines()).grid(row=0, column=9, padx=(0, 6), pady=2, sticky="w")
+        ttk.Button(top, text="Exportar", command=lambda: export_cells()).grid(row=0, column=10, pady=2, sticky="e")
+        ToolTip(inset_label, "Inset corta alguns pixels para dentro de cada célula. A área vermelha mostra o que será descartado antes de exportar.")
+        ToolTip(inset_spin, "Inset corta alguns pixels para dentro de cada célula. A área vermelha mostra o que será descartado antes de exportar.")
+        ToolTip(trim_check, "Depois do corte da grade, tenta remover a borda branca conectada às bordas de cada célula.")
+
+        ttk.Label(top, text="Prefixo").grid(row=1, column=0, sticky="w", pady=(8, 2))
+        ttk.Entry(top, textvariable=prefix_var, width=28).grid(row=1, column=1, columnspan=3, sticky="ew", padx=(4, 10), pady=(8, 2))
+        ttk.Label(top, textvariable=source_var).grid(row=1, column=4, columnspan=4, sticky="w", pady=(8, 2))
+        ttk.Label(top, textvariable=export_var).grid(row=1, column=8, columnspan=3, sticky="e", pady=(8, 2))
+
+        canvas = tk.Canvas(win, bg="#202020", highlightthickness=0, cursor="crosshair")
+        canvas.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 8))
+
+        bottom = ttk.Frame(win, padding=(10, 0, 10, 10))
+        bottom.grid(row=2, column=0, sticky="ew")
+        bottom.columnconfigure(0, weight=1)
+        ttk.Label(bottom, textvariable=info_var).grid(row=0, column=0, sticky="w")
+
+        def clamp_crop_and_lines():
+            if state["image"] is None or state["crop_box"] is None:
+                return
+            largura, altura = state["image"].size
+            left, top_y, right, bottom_y = state["crop_box"]
+            left = max(0, min(left, largura - 2))
+            top_y = max(0, min(top_y, altura - 2))
+            right = max(left + 2, min(right, largura))
+            bottom_y = max(top_y + 2, min(bottom_y, altura))
+            state["crop_box"] = [left, top_y, right, bottom_y]
+
+            min_gap = 4
+            v_sorted = sorted(int(x) for x in state["v_lines"])
+            h_sorted = sorted(int(y) for y in state["h_lines"])
+
+            fixed_v = []
+            prev = left
+            for x in v_sorted:
+                x = max(prev + min_gap, min(x, right - min_gap))
+                fixed_v.append(x)
+                prev = x
+            for idx in range(len(fixed_v) - 1, -1, -1):
+                max_here = right - min_gap * (len(fixed_v) - idx)
+                fixed_v[idx] = min(fixed_v[idx], max_here)
+            state["v_lines"] = fixed_v
+
+            fixed_h = []
+            prev = top_y
+            for y in h_sorted:
+                y = max(prev + min_gap, min(y, bottom_y - min_gap))
+                fixed_h.append(y)
+                prev = y
+            for idx in range(len(fixed_h) - 1, -1, -1):
+                max_here = bottom_y - min_gap * (len(fixed_h) - idx)
+                fixed_h[idx] = min(fixed_h[idx], max_here)
+            state["h_lines"] = fixed_h
+
+        def distribute_lines():
+            if state["image"] is None:
+                return
+            try:
+                cols = max(1, int(cols_var.get()))
+                rows = max(1, int(rows_var.get()))
+            except Exception:
+                return
+            if state["crop_box"] is None:
+                largura, altura = state["image"].size
+                state["crop_box"] = [0, 0, largura, altura]
+            left, top_y, right, bottom_y = state["crop_box"]
+            width = right - left
+            height = bottom_y - top_y
+            state["v_lines"] = [int(round(left + width * idx / cols)) for idx in range(1, cols)]
+            state["h_lines"] = [int(round(top_y + height * idx / rows)) for idx in range(1, rows)]
+            state["cell_offsets"] = {}
+            state["selected_cells"] = {(row, col) for row in range(rows) for col in range(cols)}
+            clamp_crop_and_lines()
+            redraw_preview()
+
+        def current_cell_boxes():
+            if state["crop_box"] is None:
+                return []
+            try:
+                cols = max(1, int(cols_var.get()))
+                rows = max(1, int(rows_var.get()))
+                inset = max(0, int(inset_var.get()))
+            except Exception:
+                return []
+            x_positions = [state["crop_box"][0], *state["v_lines"], state["crop_box"][2]]
+            y_positions = [state["crop_box"][1], *state["h_lines"], state["crop_box"][3]]
+            cells = []
+            for row in range(rows):
+                for col in range(cols):
+                    outer = (
+                        x_positions[col],
+                        y_positions[row],
+                        x_positions[col + 1],
+                        y_positions[row + 1],
+                    )
+                    base_inner = (
+                        outer[0] + inset,
+                        outer[1] + inset,
+                        outer[2] - inset,
+                        outer[3] - inset,
+                    )
+                    dx, dy = state["cell_offsets"].get((row, col), (0, 0))
+                    if base_inner[2] <= base_inner[0] or base_inner[3] <= base_inner[1]:
+                        inner = base_inner
+                        dx = 0
+                        dy = 0
+                    else:
+                        min_dx = outer[0] - base_inner[0]
+                        max_dx = outer[2] - base_inner[2]
+                        min_dy = outer[1] - base_inner[1]
+                        max_dy = outer[3] - base_inner[3]
+                        dx = max(min_dx, min(int(dx), max_dx))
+                        dy = max(min_dy, min(int(dy), max_dy))
+                        state["cell_offsets"][(row, col)] = (dx, dy)
+                        inner = (
+                            base_inner[0] + dx,
+                            base_inner[1] + dy,
+                            base_inner[2] + dx,
+                            base_inner[3] + dy,
+                        )
+                    cells.append((row, col, outer, inner))
+            return cells
+
+        def projection_density(gray_img, axis):
+            largura, altura = gray_img.size
+            px = gray_img.load()
+            if axis == "x":
+                dens = []
+                for x in range(largura):
+                    score = 0
+                    for y in range(altura):
+                        if px[x, y] < 245:
+                            score += 1
+                    dens.append(score)
+                return dens
+            dens = []
+            for y in range(altura):
+                score = 0
+                for x in range(largura):
+                    if px[x, y] < 245:
+                        score += 1
+                dens.append(score)
+            return dens
+
+        def detect_bounds(dens, total_other_axis):
+            threshold = max(2, int(total_other_axis * 0.01))
+            start = 0
+            end = len(dens) - 1
+            while start < len(dens) and dens[start] <= threshold:
+                start += 1
+            while end >= 0 and dens[end] <= threshold:
+                end -= 1
+            if end <= start:
+                return 0, len(dens)
+            return start, end + 1
+
+        def detect_internal_lines(dens, start, end, count):
+            if count <= 1:
+                return []
+            region = max(2, end - start)
+            segment = region / count
+            out = []
+            for idx in range(1, count):
+                target = int(round(start + segment * idx))
+                radius = max(8, int(segment * 0.2))
+                lo = max(start + 2, target - radius)
+                hi = min(end - 2, target + radius)
+                if hi <= lo:
+                    out.append(target)
+                    continue
+                best = min(range(lo, hi + 1), key=lambda pos: (dens[pos], abs(pos - target)))
+                out.append(best)
+            return out
+
+        def auto_detect_lines():
+            if state["image"] is None:
+                return
+            try:
+                cols = max(1, int(cols_var.get()))
+                rows = max(1, int(rows_var.get()))
+            except Exception:
+                messagebox.showerror("Erro", "Linhas e colunas precisam ser números válidos.")
+                return
+
+            gray = state["image"].convert("L")
+            dens_x = projection_density(gray, "x")
+            dens_y = projection_density(gray, "y")
+            left, right = detect_bounds(dens_x, gray.height)
+            top_y, bottom_y = detect_bounds(dens_y, gray.width)
+            state["crop_box"] = [left, top_y, right, bottom_y]
+            state["v_lines"] = detect_internal_lines(dens_x, left, right, cols)
+            state["h_lines"] = detect_internal_lines(dens_y, top_y, bottom_y, rows)
+            state["cell_offsets"] = {}
+            state["selected_cells"] = {(row, col) for row in range(rows) for col in range(cols)}
+            clamp_crop_and_lines()
+            redraw_preview()
+            info_var.set("Linhas detectadas automaticamente. Arraste para ajustar se necessário.")
+
+        def choose_source():
+            initial_dir = self._last_cropper_folder()
+            if (
+                not initial_dir.exists()
+                and state["source_path"] is not None
+                and state["source_path"].parent.exists()
+            ):
+                initial_dir = state["source_path"].parent
+            file_path = filedialog.askopenfilename(
+                title="Escolher imagem da grade",
+                initialdir=str(initial_dir),
+                filetypes=[
+                    ("Imagens", "*.png *.jpg *.jpeg *.webp *.bmp *.tif *.tiff"),
+                    ("Todos", "*.*"),
+                ],
+            )
+            if file_path:
+                load_source(Path(file_path))
+
+        def load_source(path: Path, update_last_folder: bool = True):
+            try:
+                with Image.open(path) as im:
+                    state["image"] = im.convert("RGB")
+            except Exception as exc:
+                messagebox.showerror("Erro", f"Não foi possível abrir a imagem.\n\n{exc}")
+                return
+            state["source_path"] = path
+            if update_last_folder:
+                self._set_last_cropper_folder(path.parent)
+            self._save_cropper_prefs(cols_var.get(), rows_var.get(), inset_var.get(), trim_var.get(), prefix_var.get().strip())
+            source_var.set(f"Origem: {path.name}")
+            if not prefix_var.get().strip():
+                prefix_var.set(path.stem)
+            self._save_cropper_prefs(cols_var.get(), rows_var.get(), inset_var.get(), trim_var.get(), prefix_var.get().strip())
+            export_var.set(f"Salvar em: {self._current_images_folder()}")
+            auto_detect_lines()
+
+        def image_to_canvas(x, y):
+            box = state["image_box"]
+            if box is None or state["image"] is None:
+                return 0, 0
+            left, top_y, right, bottom_y = box
+            largura, altura = state["image"].size
+            scale_x = (right - left) / max(1, largura)
+            scale_y = (bottom_y - top_y) / max(1, altura)
+            return left + x * scale_x, top_y + y * scale_y
+
+        def canvas_to_image(x, y):
+            box = state["image_box"]
+            if box is None or state["image"] is None:
+                return 0, 0
+            left, top_y, right, bottom_y = box
+            largura, altura = state["image"].size
+            scale_x = largura / max(1, right - left)
+            scale_y = altura / max(1, bottom_y - top_y)
+            img_x = int(round((x - left) * scale_x))
+            img_y = int(round((y - top_y) * scale_y))
+            return img_x, img_y
+
+        def redraw_preview(_event=None):
+            canvas.delete("all")
+            if state["image"] is None:
+                canvas.create_text(
+                    max(40, canvas.winfo_width() // 2),
+                    max(30, canvas.winfo_height() // 2),
+                    text="Abra uma imagem para recortar a grade.",
+                    fill="#f0f0f0",
+                    font=("TkDefaultFont", 14),
+                )
+                return
+
+            canvas_w = max(200, canvas.winfo_width())
+            canvas_h = max(200, canvas.winfo_height())
+            display = state["image"].copy()
+            display.thumbnail((canvas_w - 20, canvas_h - 20), Image.LANCZOS)
+            preview_rgba = display.convert("RGBA")
+            left = (canvas_w - display.width) // 2
+            top_y = (canvas_h - display.height) // 2
+            right = left + display.width
+            bottom_y = top_y + display.height
+            state["image_box"] = (left, top_y, right, bottom_y)
+
+            if state["crop_box"] is None:
+                largura, altura = state["image"].size
+                state["crop_box"] = [0, 0, largura, altura]
+                distribute_lines()
+
+            clamp_crop_and_lines()
+            crop_left, crop_top, crop_right, crop_bottom = state["crop_box"]
+            overlay = Image.new("RGBA", preview_rgba.size, (0, 0, 0, 0))
+            overlay_draw = ImageDraw.Draw(overlay, "RGBA")
+
+            def image_to_preview_coords(x, y):
+                px = int(round((x / max(1, state["image"].width)) * preview_rgba.width))
+                py = int(round((y / max(1, state["image"].height)) * preview_rgba.height))
+                return px, py
+
+            for row, col, outer, inner in current_cell_boxes():
+                ox0, oy0 = image_to_preview_coords(outer[0], outer[1])
+                ox1, oy1 = image_to_preview_coords(outer[2], outer[3])
+                ix0, iy0 = image_to_preview_coords(inner[0], inner[1])
+                ix1, iy1 = image_to_preview_coords(inner[2], inner[3])
+                selected = (row, col) in state["selected_cells"]
+
+                if iy0 > oy0:
+                    overlay_draw.rectangle((ox0, oy0, ox1, iy0), fill=(216, 76, 76, 95))
+                if oy1 > iy1:
+                    overlay_draw.rectangle((ox0, iy1, ox1, oy1), fill=(216, 76, 76, 95))
+                if ix0 > ox0 and iy1 > iy0:
+                    overlay_draw.rectangle((ox0, iy0, ix0, iy1), fill=(216, 76, 76, 95))
+                if ox1 > ix1 and iy1 > iy0:
+                    overlay_draw.rectangle((ix1, iy0, ox1, iy1), fill=(216, 76, 76, 95))
+                if not selected:
+                    overlay_draw.rectangle((ox0, oy0, ox1, oy1), fill=(255, 59, 48, 110))
+
+            preview_rgba.alpha_composite(overlay)
+            state["photo"] = ImageTk.PhotoImage(preview_rgba)
+            canvas.create_image(left, top_y, image=state["photo"], anchor="nw")
+
+            x0, y0 = image_to_canvas(crop_left, crop_top)
+            x1, y1 = image_to_canvas(crop_right, crop_bottom)
+            canvas.create_rectangle(x0, y0, x1, y1, outline="#ff5252", width=2)
+
+            for row, col, outer, inner in current_cell_boxes():
+                ox0, oy0 = image_to_canvas(outer[0], outer[1])
+                ox1, oy1 = image_to_canvas(outer[2], outer[3])
+                ix0, iy0 = image_to_canvas(inner[0], inner[1])
+                ix1, iy1 = image_to_canvas(inner[2], inner[3])
+                selected = (row, col) in state["selected_cells"]
+                if ix1 > ix0 and iy1 > iy0:
+                    canvas.create_rectangle(ix0, iy0, ix1, iy1, outline="#6cf28a" if selected else "#ff7272", width=1)
+                canvas.create_text(
+                    ox0 + 8,
+                    oy0 + 8,
+                    anchor="nw",
+                    text=f"{row + 1},{col + 1}",
+                    fill="#ffffff" if selected else "#ffd0d0",
+                    font=("TkDefaultFont", 9, "bold"),
+                )
+
+            for pos in state["v_lines"]:
+                cx0, cy0 = image_to_canvas(pos, crop_top)
+                cx1, cy1 = image_to_canvas(pos, crop_bottom)
+                canvas.create_line(cx0, cy0, cx1, cy1, fill="#25b7ff", width=2)
+            for pos in state["h_lines"]:
+                cx0, cy0 = image_to_canvas(crop_left, pos)
+                cx1, cy1 = image_to_canvas(crop_right, pos)
+                canvas.create_line(cx0, cy0, cx1, cy1, fill="#25b7ff", width=2)
+
+            canvas.create_text(
+                12,
+                12,
+                anchor="nw",
+                text="Vermelho: área descartada | Azul: cortes internos | Clique numa célula para incluir/excluir",
+                fill="#ffffff",
+                font=("TkDefaultFont", 10),
+            )
+
+        def on_grid_change(*_args):
+            if state["image"] is not None:
+                distribute_lines()
+
+        def begin_drag(event):
+            if state["image"] is None or state["crop_box"] is None or state["image_box"] is None:
+                return
+            state["drag_moved"] = False
+            state["click_cell"] = None
+            if state["drag_after_id"] is not None:
+                win.after_cancel(state["drag_after_id"])
+                state["drag_after_id"] = None
+            state["pending_cell_drag"] = None
+            img_x, img_y = canvas_to_image(event.x, event.y)
+            crop_left, crop_top, crop_right, crop_bottom = state["crop_box"]
+            threshold = 10
+            candidates = [
+                (abs(img_x - crop_left), ("left", 0)),
+                (abs(img_x - crop_right), ("right", 0)),
+                (abs(img_y - crop_top), ("top", 0)),
+                (abs(img_y - crop_bottom), ("bottom", 0)),
+            ]
+            for idx, pos in enumerate(state["v_lines"]):
+                candidates.append((abs(img_x - pos), ("v", idx)))
+            for idx, pos in enumerate(state["h_lines"]):
+                candidates.append((abs(img_y - pos), ("h", idx)))
+            dist, drag = min(candidates, key=lambda item: item[0])
+            if dist <= threshold:
+                state["drag"] = drag
+                return
+            for row, col, outer, inner in current_cell_boxes():
+                if (row, col) in state["selected_cells"] and inner[0] <= img_x <= inner[2] and inner[1] <= img_y <= inner[3]:
+                    state["click_cell"] = (row, col)
+                    state["pending_cell_drag"] = (row, col, img_x, img_y)
+                    def activate_cell_drag():
+                        if state["pending_cell_drag"] == (row, col, img_x, img_y):
+                            state["drag"] = ("cell", row, col, img_x, img_y)
+                            state["drag_after_id"] = None
+                    state["drag_after_id"] = win.after(180, activate_cell_drag)
+                    return
+                if outer[0] <= img_x <= outer[2] and outer[1] <= img_y <= outer[3]:
+                    state["click_cell"] = (row, col)
+                    break
+
+        def drag_motion(event):
+            if state["image"] is None or state["crop_box"] is None:
+                return
+            img_x, img_y = canvas_to_image(event.x, event.y)
+
+            if state["drag"] is None:
+                if state["pending_cell_drag"] is not None:
+                    row, col, start_x, start_y = state["pending_cell_drag"]
+                    if abs(img_x - start_x) > 3 or abs(img_y - start_y) > 3:
+                        state["pending_cell_drag"] = None
+                        if state["drag_after_id"] is not None:
+                            win.after_cancel(state["drag_after_id"])
+                            state["drag_after_id"] = None
+                return
+
+            state["drag_moved"] = True
+            crop_left, crop_top, crop_right, crop_bottom = state["crop_box"]
+            largura, altura = state["image"].size
+            min_gap = 4
+            kind = state["drag"][0]
+
+            if kind == "cell":
+                _kind, row, col, last_x, last_y = state["drag"]
+                dx = img_x - last_x
+                dy = img_y - last_y
+                cur_dx, cur_dy = state["cell_offsets"].get((row, col), (0, 0))
+                state["cell_offsets"][(row, col)] = (cur_dx + dx, cur_dy + dy)
+                state["drag"] = ("cell", row, col, img_x, img_y)
+                redraw_preview()
+                return
+
+            _kind, index = state["drag"]
+
+            if kind in ("left", "right", "v"):
+                prev = 0 if kind == "left" else (state["v_lines"][index - 1] if kind == "v" and index > 0 else crop_left)
+                nxt = largura if kind == "right" else (state["v_lines"][index + 1] if kind == "v" and index < len(state["v_lines"]) - 1 else crop_right)
+                new_x = max(prev + min_gap, min(img_x, nxt - min_gap))
+                if kind == "left":
+                    state["crop_box"][0] = new_x
+                elif kind == "right":
+                    state["crop_box"][2] = new_x
+                else:
+                    state["v_lines"][index] = new_x
+            else:
+                prev = 0 if kind == "top" else (state["h_lines"][index - 1] if kind == "h" and index > 0 else crop_top)
+                nxt = altura if kind == "bottom" else (state["h_lines"][index + 1] if kind == "h" and index < len(state["h_lines"]) - 1 else crop_bottom)
+                new_y = max(prev + min_gap, min(img_y, nxt - min_gap))
+                if kind == "top":
+                    state["crop_box"][1] = new_y
+                elif kind == "bottom":
+                    state["crop_box"][3] = new_y
+                else:
+                    state["h_lines"][index] = new_y
+
+            clamp_crop_and_lines()
+            redraw_preview()
+
+        def end_drag(_event=None):
+            if state["drag_after_id"] is not None:
+                win.after_cancel(state["drag_after_id"])
+                state["drag_after_id"] = None
+            if state["drag"] is None and state["pending_cell_drag"] is not None and not state["drag_moved"]:
+                state["click_cell"] = (state["pending_cell_drag"][0], state["pending_cell_drag"][1])
+            if state["drag"] is None and state["click_cell"] is not None and not state["drag_moved"]:
+                cell = state["click_cell"]
+                if cell in state["selected_cells"]:
+                    state["selected_cells"].remove(cell)
+                else:
+                    state["selected_cells"].add(cell)
+                redraw_preview()
+            state["drag"] = None
+            state["pending_cell_drag"] = None
+            state["click_cell"] = None
+            state["drag_moved"] = False
+
+        def export_cells():
+            if state["image"] is None or state["crop_box"] is None:
+                messagebox.showwarning("Aviso", "Abra uma imagem antes de exportar.")
+                return
+
+            try:
+                cols = max(1, int(cols_var.get()))
+                rows = max(1, int(rows_var.get()))
+                inset = max(0, int(inset_var.get()))
+            except Exception:
+                messagebox.showerror("Erro", "Linhas, colunas e inset precisam ser números válidos.")
+                return
+
+            output_dir = self._current_images_folder()
+            output_dir.mkdir(parents=True, exist_ok=True)
+            export_var.set(f"Salvar em: {output_dir}")
+            self._save_cropper_prefs(cols, rows, inset, bool(trim_var.get()), prefix_var.get().strip())
+
+            base_name = prefix_var.get().strip() or (state["source_path"].stem if state["source_path"] else "recorte")
+            suffix = state["source_path"].suffix.lower() if state["source_path"] else ".png"
+            if suffix not in script.EXTENSOES_ACEITAS:
+                suffix = ".png"
+
+            cfg_trim = self._get_config_ui()
+            selected_cells = sorted(state["selected_cells"])
+            if not selected_cells:
+                messagebox.showwarning("Aviso", "Selecione pelo menos uma célula para exportar.")
+                return
+            digits = max(2, len(str(len(selected_cells))))
+            saved = []
+            export_index = 1
+
+            for row, col, _outer, inner in current_cell_boxes():
+                if (row, col) not in state["selected_cells"]:
+                    continue
+                x0, y0, x1, y1 = inner
+                if x1 <= x0 or y1 <= y0:
+                    continue
+                cell = state["image"].crop((x0, y0, x1, y1)).convert("RGBA")
+                if bool(trim_var.get()):
+                    cell = script.cortar_espacos_brancos(cell, cfg_trim)
+                target = output_dir / f"{base_name}_{str(export_index).zfill(digits)}{suffix}"
+                target = script.obter_caminho_saida_disponivel(target)
+                if suffix in (".jpg", ".jpeg"):
+                    cell.convert("RGB").save(target, quality=95)
+                else:
+                    cell.save(target)
+                saved.append(target)
+                export_index += 1
+
+            if not saved:
+                messagebox.showwarning("Aviso", "Nenhuma célula válida foi exportada.")
+                return
+
+            self.status_var.set(f"{len(saved)} imagem(ns) exportada(s) para {output_dir}.")
+            self._reload_everything()
+            messagebox.showinfo("Concluído", f"{len(saved)} imagem(ns) exportada(s) em:\n{output_dir}")
+
+        cols_var.trace_add("write", on_grid_change)
+        rows_var.trace_add("write", on_grid_change)
+        inset_var.trace_add("write", lambda *_args: redraw_preview())
+        canvas.bind("<Configure>", redraw_preview)
+        canvas.bind("<ButtonPress-1>", begin_drag)
+        canvas.bind("<B1-Motion>", drag_motion)
+        canvas.bind("<ButtonRelease-1>", end_drag)
+
+        if self.imagem_atual is not None and self.imagem_atual.exists():
+            load_source(self.imagem_atual, update_last_folder=False)
+        else:
+            redraw_preview()
+
     def _get_config_ui(self):
         cfg = script.CONFIG_PADRAO.copy()
         cfg.update(self.global_cfg)
@@ -1449,6 +2462,17 @@ class PDFSheetUI:
             tip = ToolTip(widget, text)
             setattr(widget, "_app_tooltip", tip)
             self.tooltips.append(tip)
+
+    def _bind_static_tooltip(self, widget, text: str):
+        if not text:
+            return
+        existing = getattr(widget, "_app_tooltip", None)
+        if existing is not None:
+            existing.text = text
+            return
+        tip = ToolTip(widget, text)
+        setattr(widget, "_app_tooltip", tip)
+        self.tooltips.append(tip)
 
     def _bind_scale_wheel(self, widget, var, minimum, maximum, step):
         minimum = float(minimum)
@@ -1541,14 +2565,14 @@ class PDFSheetUI:
             self.imagens = []
             self.listbox.delete(0, tk.END)
             self.info_img_var.set(f"Pasta não encontrada: {pasta}")
+            self.imagem_atual = None
+            self._sync_single_rename_field()
             return
         self.imagens = script.listar_imagens(pasta)
-        self.listbox.delete(0, tk.END)
-        for p in self.imagens:
-            self.listbox.insert(tk.END, p.name)
+        if hasattr(self, "sort_mode_var"):
+            self.sort_mode_var.set("Nome A-Z")
+        self._refresh_image_listbox()
         if self.imagens:
-            self.listbox.selection_clear(0, tk.END)
-            self.listbox.selection_set(0)
             self._on_select_image()
         else:
             self.info_img_var.set("Nenhuma imagem encontrada.")
@@ -1568,8 +2592,10 @@ class PDFSheetUI:
         sel = self.listbox.curselection()
         if not sel or not self.imagens:
             self.imagem_atual = None
+            self._sync_single_rename_field()
             return
         self.imagem_atual = self.imagens[sel[0]]
+        self._sync_single_rename_field()
         self._refresh_controls_for_mode()
         self._refresh_image_preview_async()
 
@@ -1681,6 +2707,8 @@ class PDFSheetUI:
         cfg = self._get_config_ui()
         imagem = self.imagem_atual
         self.status_var.set("Atualizando preview da imagem...")
+        self.progress.configure(mode="indeterminate")
+        self.progress.start(8)
         threading.Thread(
             target=self._refresh_image_preview_worker,
             args=(req_id, imagem, cfg),
@@ -1722,6 +2750,7 @@ class PDFSheetUI:
                     self.preview_raw_cache[raw_key] = (original.copy(), cropped.copy(), numero, posicao)
                 else:
                     original, cropped, numero, posicao = raw[0].copy(), raw[1].copy(), raw[2], raw[3]
+                numero, posicao = script.interpretar_nome_arquivo(imagem, cfg_img)
 
                 fig_key_data = self._figure_key_data(imagem, cfg_img, 720, numero, posicao)
                 final = self._load_figure_cache_disk(imagem, 720, fig_key_data)
@@ -1789,6 +2818,8 @@ class PDFSheetUI:
     def _release_preview_lock(self):
         if self.preview_lock.locked():
             self.preview_lock.release()
+        if not self.render_lock.locked():
+            self._stop_progress()
 
     def _refresh_image_preview(self):
         # Compatibilidade com chamadas antigas.
@@ -1994,10 +3025,13 @@ class PDFSheetUI:
             self.raw_cache[raw_key] = (original.copy(), cropped.copy(), numero, posicao)
         else:
             _original, cropped, numero, posicao = raw[0].copy(), raw[1].copy(), raw[2], raw[3]
+        numero, posicao = script.interpretar_nome_arquivo(caminho, cfg_img)
 
         fig_key = (
             raw_key,
             tamanho_quadrado,
+            str(numero),
+            str(posicao),
             int(cfg_img.get("borda_preta_espessura", 8)),
             float(cfg_img.get("margem_interna_quadrado", 0.06)),
             float(cfg_img.get("tamanho_numero_relativo", 0.085)),
@@ -2096,6 +3130,20 @@ class PDFSheetUI:
         self.listbox.see(idx)
         self._on_select_image()
 
+    def _image_content_fingerprint(self, imagem: Path):
+        st = imagem.stat()
+        stat_key = (str(imagem), st.st_mtime_ns, st.st_size)
+        cached = self.image_content_cache.get(stat_key)
+        if cached is not None:
+            return cached
+        h = hashlib.sha1()
+        with open(imagem, "rb") as f:
+            for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                h.update(chunk)
+        fingerprint = h.hexdigest()
+        self.image_content_cache[stat_key] = fingerprint
+        return fingerprint
+
     @staticmethod
     def _preview_cache_key(imagem: Path, cfg: dict):
         st = imagem.stat()
@@ -2106,6 +3154,7 @@ class PDFSheetUI:
             st.st_size,
             str(cfg.get("backend_remocao_fundo", "rembg")),
             str(cfg.get("remover_fundo_modo", "todos")),
+            bool(script.deve_remover_fundo(imagem, cfg)),
             str(cfg.get("modelo_remocao_fundo", "birefnet-general-lite")),
             str(cfg.get("modo_inspyrenet", "base")),
             bool(cfg.get("rembg_alpha_matting", False)),
@@ -2128,16 +3177,16 @@ class PDFSheetUI:
             str(cfg.get("posicao_padrao_numero", "superior_esquerdo")),
         )
 
-    @staticmethod
-    def _raw_cache_key(imagem: Path, cfg: dict):
+    def _raw_cache_key(self, imagem: Path, cfg: dict):
         st = imagem.stat()
         return (
             CACHE_SCHEMA_VERSION,
-            script.normalizar_chave_imagem(imagem),
+            self._image_content_fingerprint(imagem),
             st.st_mtime_ns,
             st.st_size,
             str(cfg.get("backend_remocao_fundo", "rembg")),
             str(cfg.get("remover_fundo_modo", "todos")),
+            bool(script.deve_remover_fundo(imagem, cfg)),
             str(cfg.get("modelo_remocao_fundo", "birefnet-general-lite")),
             str(cfg.get("modo_inspyrenet", "base")),
             bool(cfg.get("rembg_alpha_matting", False)),
@@ -2150,16 +3199,16 @@ class PDFSheetUI:
             int(cfg.get("limite_lado_processamento", 2000)),
         )
 
-    @staticmethod
-    def _preview_raw_cache_key(imagem: Path, cfg: dict):
+    def _preview_raw_cache_key(self, imagem: Path, cfg: dict):
         st = imagem.stat()
         return (
             CACHE_SCHEMA_VERSION,
-            script.normalizar_chave_imagem(imagem),
+            self._image_content_fingerprint(imagem),
             st.st_mtime_ns,
             st.st_size,
             str(cfg.get("backend_remocao_fundo", "rembg")),
             str(cfg.get("remover_fundo_modo", "todos")),
+            bool(script.deve_remover_fundo(imagem, cfg)),
             str(cfg.get("modelo_remocao_fundo", "birefnet-general-lite")),
             str(cfg.get("modo_inspyrenet", "base")),
             bool(cfg.get("rembg_alpha_matting", False)),
@@ -2244,16 +3293,16 @@ class PDFSheetUI:
             str(cfg.get("posicao_padrao_numero", "superior_esquerdo")),
         )
 
-    @staticmethod
-    def _rembg_cache_key(imagem: Path, cfg: dict):
+    def _rembg_cache_key(self, imagem: Path, cfg: dict):
         st = imagem.stat()
         return (
             CACHE_SCHEMA_VERSION,
-            script.normalizar_chave_imagem(imagem),
+            self._image_content_fingerprint(imagem),
             st.st_mtime_ns,
             st.st_size,
             str(cfg.get("backend_remocao_fundo", "rembg")),
             str(cfg.get("remover_fundo_modo", "todos")),
+            bool(script.deve_remover_fundo(imagem, cfg)),
             str(cfg.get("modelo_remocao_fundo", "birefnet-general-lite")),
             str(cfg.get("modo_inspyrenet", "base")),
             bool(cfg.get("rembg_alpha_matting", False)),

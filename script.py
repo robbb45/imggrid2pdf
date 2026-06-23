@@ -39,35 +39,84 @@ def preparar_ambiente_portatil():
 
 preparar_ambiente_portatil()
 
-try:
-    from rembg import remove as rembg_remove
-    from rembg import new_session as rembg_new_session
-    from rembg.sessions import sessions_class as rembg_sessions_class
-except ImportError:
-    rembg_remove = None
-    rembg_new_session = None
-    rembg_sessions_class = []
-
-try:
-    from withoutbg import WithoutBG
-except ImportError:
-    WithoutBG = None
-
-try:
-    from transparent_background import Remover as InSPyReNetRemover
-except ImportError:
-    InSPyReNetRemover = None
-
-try:
-    import torch
-except ImportError:
-    torch = None
+rembg_remove = None
+rembg_new_session = None
+rembg_sessions_class = []
+WithoutBG = None
+InSPyReNetRemover = None
+torch = None
 
 _NVIDIA_DLL_PATHS_PREPARADOS = False
+_REMBG_IMPORT_ATTEMPTED = False
+_WITHOUTBG_IMPORT_ATTEMPTED = False
+_INSPYRENET_IMPORT_ATTEMPTED = False
+_TORCH_IMPORT_ATTEMPTED = False
 _REMBG_SESSION_CACHE = {}
 _WITHOUTBG_MODEL_CACHE = None
 _INSPYRENET_REMOVER_CACHE = {}
 _THREAD_STATE = threading.local()
+
+
+def garantir_rembg_importado():
+    global rembg_remove, rembg_new_session, rembg_sessions_class, _REMBG_IMPORT_ATTEMPTED
+    if _REMBG_IMPORT_ATTEMPTED:
+        return rembg_remove is not None and rembg_new_session is not None
+    _REMBG_IMPORT_ATTEMPTED = True
+    try:
+        from rembg import remove as imported_remove
+        from rembg import new_session as imported_new_session
+        from rembg.sessions import sessions_class as imported_sessions_class
+    except ImportError:
+        rembg_remove = None
+        rembg_new_session = None
+        rembg_sessions_class = []
+        return False
+    rembg_remove = imported_remove
+    rembg_new_session = imported_new_session
+    rembg_sessions_class = imported_sessions_class
+    return True
+
+
+def garantir_withoutbg_importado():
+    global WithoutBG, _WITHOUTBG_IMPORT_ATTEMPTED
+    if _WITHOUTBG_IMPORT_ATTEMPTED:
+        return WithoutBG is not None
+    _WITHOUTBG_IMPORT_ATTEMPTED = True
+    try:
+        from withoutbg import WithoutBG as imported_withoutbg
+    except ImportError:
+        WithoutBG = None
+        return False
+    WithoutBG = imported_withoutbg
+    return True
+
+
+def garantir_inspyrenet_importado():
+    global InSPyReNetRemover, _INSPYRENET_IMPORT_ATTEMPTED
+    if _INSPYRENET_IMPORT_ATTEMPTED:
+        return InSPyReNetRemover is not None
+    _INSPYRENET_IMPORT_ATTEMPTED = True
+    try:
+        from transparent_background import Remover as imported_remover
+    except ImportError:
+        InSPyReNetRemover = None
+        return False
+    InSPyReNetRemover = imported_remover
+    return True
+
+
+def garantir_torch_importado():
+    global torch, _TORCH_IMPORT_ATTEMPTED
+    if _TORCH_IMPORT_ATTEMPTED:
+        return torch is not None
+    _TORCH_IMPORT_ATTEMPTED = True
+    try:
+        import torch as imported_torch
+    except ImportError:
+        torch = None
+        return False
+    torch = imported_torch
+    return True
 
 
 # =========================================================
@@ -252,6 +301,16 @@ def reduzir_para_processamento(img, config):
 
 def listar_modelos_rembg_disponiveis():
     nomes = []
+    if not _REMBG_IMPORT_ATTEMPTED:
+        return [
+            "birefnet-general-lite",
+            "birefnet-general",
+            "bria-rmbg",
+            "u2net",
+            "u2netp",
+            "isnet-general-use",
+        ]
+    garantir_rembg_importado()
     for sessao in rembg_sessions_class or []:
         try:
             nome = str(sessao.name())
@@ -325,6 +384,7 @@ def obter_dispositivo_inspyrenet(config):
     dispositivo = str(config.get("inspyrenet_device", "auto")).strip().lower()
     if dispositivo not in listar_dispositivos_inspyrenet():
         return "auto"
+    garantir_torch_importado()
     if dispositivo == "cuda":
         if torch is not None and torch.cuda.is_available():
             return "cuda"
@@ -337,6 +397,7 @@ def obter_dispositivo_inspyrenet(config):
 
 
 def obter_sessao_rembg(modelo):
+    garantir_rembg_importado()
     if rembg_new_session is None:
         return None
 
@@ -356,6 +417,7 @@ def baixar_modelo_rembg(modelo=None):
 
 def obter_modelo_withoutbg():
     global _WITHOUTBG_MODEL_CACHE
+    garantir_withoutbg_importado()
     if WithoutBG is None:
         return None
     if _WITHOUTBG_MODEL_CACHE is None:
@@ -368,6 +430,7 @@ def baixar_modelo_withoutbg():
 
 
 def obter_remover_inspyrenet(modo="base", dispositivo="auto"):
+    garantir_inspyrenet_importado()
     if InSPyReNetRemover is None:
         return None
     chave = (modo, dispositivo)
@@ -526,10 +589,6 @@ def aplicar_remocao_fundo(img, caminho_imagem, config):
     if not deve_remover_fundo(caminho_imagem, config):
         return img.convert("RGBA")
 
-    if rembg_remove is None:
-        registrar_erro_remocao_fundo("rembg", "Pacote rembg não está instalado.")
-        return img.convert("RGBA")
-
     try:
         preparar_paths_nvidia_dll()
         img_rgba = img.convert("RGBA")
@@ -566,6 +625,9 @@ def aplicar_remocao_fundo(img, caminho_imagem, config):
                 return img_sem_fundo.convert("RGBA")
             return img_rgba
 
+        if not garantir_rembg_importado() or rembg_remove is None:
+            registrar_erro_remocao_fundo("rembg", "Pacote rembg não está instalado.")
+            return img_rgba
         modelo = obter_modelo_remocao_fundo(config)
         sessao = obter_sessao_rembg(modelo)
         if sessao is None:
