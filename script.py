@@ -205,8 +205,14 @@ def carregar_config():
             print("O script vai usar as configurações padrão.")
             print(f"Detalhe do erro: {erro}")
     else:
-        print("Arquivo config.json não encontrado.")
-        print("O script vai usar as configurações padrão.")
+        try:
+            with open(caminho_config, "w", encoding="utf-8") as arquivo:
+                json.dump(config, arquivo, indent=2, ensure_ascii=False)
+            print("Arquivo config.json criado com as configurações padrão.")
+        except Exception as erro:
+            print("Arquivo config.json não encontrado.")
+            print("Não foi possível criá-lo; usando as configurações padrão em memória.")
+            print(f"Detalhe do erro: {erro}")
 
     return config
 

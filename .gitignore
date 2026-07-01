@@ -16,6 +16,7 @@ deps/
 test/
 ui_layout.json
 image_overrides.json
+config.json
 
 # Generated outputs
 *.pdf
