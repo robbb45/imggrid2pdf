@@ -775,6 +775,12 @@ class PDFSheetUI:
         sort_combo.pack(side="left", padx=(0, 4))
         sort_combo.bind("<<ComboboxSelected>>", lambda _e: self._apply_image_sort())
         ttk.Button(tools, text="Renomear", command=self._toggle_rename_panel).pack(side="left", padx=(0, 4))
+        exclude_btn = ttk.Button(tools, text="Remover da lista", command=self._exclude_selected_images)
+        exclude_btn.pack(side="left", padx=(0, 4))
+        self._bind_static_tooltip(
+            exclude_btn,
+            "Move as imagens para a subpasta _excluded_images sem apagar os arquivos.",
+        )
         for label, code in (("SE", "SE"), ("SD", "SD"), ("IE", "IE"), ("ID", "ID")):
             btn = ttk.Button(tools, text=label, width=3, command=lambda c=code: self._apply_position_code_to_selected(c))
             btn.pack(side="left", padx=1)
@@ -820,6 +826,7 @@ class PDFSheetUI:
         self.listbox.bind("<ButtonPress-1>", self._on_listbox_drag_start)
         self.listbox.bind("<B1-Motion>", self._on_listbox_drag_motion)
         self.listbox.bind("<ButtonRelease-1>", self._on_listbox_drag_end)
+        self.listbox.bind("<Delete>", self._exclude_selected_images)
         self.info_img_var = tk.StringVar(value="")
         ttk.Label(topo, textvariable=self.info_img_var).grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
@@ -1005,6 +1012,105 @@ class PDFSheetUI:
 
     def _selected_images(self):
         return [self.imagens[i] for i in self._selected_image_indices()]
+
+    def _exclude_selected_images(self, _event=None):
+        targets = self._selected_images()
+        if not targets:
+            messagebox.showwarning("Aviso", "Selecione uma ou mais imagens para remover da lista.")
+            return "break"
+        if self.render_lock.locked():
+            messagebox.showwarning(
+                "Aguarde",
+                "Aguarde a renderização atual terminar antes de remover imagens da lista.",
+            )
+            return "break"
+
+        preview = "\n".join(path.name for path in targets[:10])
+        extra = "" if len(targets) <= 10 else f"\n... e mais {len(targets) - 10}"
+        noun = "esta imagem" if len(targets) == 1 else f"estas {len(targets)} imagens"
+        if not messagebox.askyesno(
+            "Remover imagens da lista",
+            f"Remover {noun} da lista?\n\n{preview}{extra}\n\n"
+            "Os arquivos serão movidos para a subpasta _excluded_images e poderão ser recuperados.",
+        ):
+            return "break"
+
+        preview_was_running = self.preview_lock.locked()
+        selected_indices = self._selected_image_indices()
+        next_index = min(selected_indices) if selected_indices else 0
+        excluded = []
+        failures = []
+        for path in targets:
+            try:
+                excluded_dir = path.parent / "_excluded_images"
+                excluded_dir.mkdir(exist_ok=True)
+                destination = script.obter_caminho_saida_disponivel(excluded_dir / path.name)
+                path.rename(destination)
+                excluded.append(path)
+            except Exception as exc:
+                failures.append((path, exc))
+
+        if excluded:
+            excluded_keys = {self._image_key(path) for path in excluded}
+            self.imagens = [path for path in self.imagens if self._image_key(path) not in excluded_keys]
+            self.preview_req_id += 1
+            self.imagem_atual = None
+            self.preview_cache.clear()
+            self.page_cache.clear()
+            self.rembg_cache.clear()
+            self.raw_cache.clear()
+            self.figure_cache.clear()
+            self.preview_raw_cache.clear()
+            self.image_content_cache.clear()
+            self.page_layout_cache = []
+            self.page_layout_signature = None
+            self.paginas_cache = []
+            self.page_preview_meta = None
+            self.preview_pagina_ref = None
+            self.dirty_page_images = {self._image_key(path) for path in self.imagens}
+            self.lbl_page.configure(image="")
+            self.page_info_var.set("Página 0/0")
+
+            remaining_selection = []
+            if self.imagens:
+                remaining_selection = [self.imagens[min(next_index, len(self.imagens) - 1)]]
+            self._refresh_image_listbox(remaining_selection)
+            self._on_select_image()
+            if not self.imagens:
+                self._clear_image_preview()
+                self.info_img_var.set("Nenhuma imagem encontrada.")
+            elif preview_was_running:
+                self.root.after(100, self._refresh_image_preview_when_ready)
+            self.status_var.set(
+                f"{len(excluded)} imagem(ns) movida(s) para _excluded_images e removida(s) da lista."
+            )
+
+        if failures:
+            details = "\n".join(f"{path.name}: {exc}" for path, exc in failures[:8])
+            extra_failures = "" if len(failures) <= 8 else f"\n... e mais {len(failures) - 8}"
+            messagebox.showerror(
+                "Erro ao remover da lista",
+                f"Não foi possível mover {len(failures)} arquivo(s):\n\n"
+                f"{details}{extra_failures}",
+            )
+        return "break"
+
+    def _clear_image_preview(self):
+        self.preview_original_ref = None
+        self.preview_crop_ref = None
+        self.preview_final_ref = None
+        self.lbl_original.configure(image="")
+        self.lbl_crop.configure(image="")
+        self.lbl_final.configure(image="")
+        self._sync_single_rename_field()
+
+    def _refresh_image_preview_when_ready(self):
+        if self.imagem_atual is None:
+            return
+        if self.preview_lock.locked():
+            self.root.after(100, self._refresh_image_preview_when_ready)
+            return
+        self._refresh_image_preview_async()
 
     def _refresh_image_listbox(self, selected_paths=None):
         selected_keys = set()
