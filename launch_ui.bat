@@ -13,4 +13,9 @@ pushd "%PROJECT_ROOT%"
 "%VENV_PYTHON%" "ui.py"
 set "EXITCODE=%ERRORLEVEL%"
 popd
+if not "%EXITCODE%"=="0" (
+  echo.
+  echo The application failed to start. Exit code: %EXITCODE%
+  pause
+)
 exit /b %EXITCODE%

@@ -43,6 +43,13 @@ IMAGE_OVERRIDE_KEYS = (
     "posicao_padrao_numero",
 )
 
+BACKEND_SELECTION_KEYS = (
+    "backend_remocao_fundo",
+    "modelo_remocao_fundo",
+    "modo_inspyrenet",
+    "inspyrenet_device",
+)
+
 CACHE_SCHEMA_VERSION = 3
 
 
@@ -83,8 +90,9 @@ class ToolTip:
 class PDFSheetUI:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("Gerador A4 - Pré-visualização")
-        self.root.geometry("1500x940+80+40")
+        self.root.title("imggrid2pdf | Editor de materiais")
+        self.root.geometry("1540x960+60+30")
+        self.root.minsize(1180, 760)
         self.root.deiconify()
         self.root.lift()
         self.root.attributes("-topmost", True)
@@ -131,6 +139,11 @@ class PDFSheetUI:
         self.page_zoom = 1.0
         self.suspend_trace = False
         self.backend_guard_active = False
+        self.backend_selection_pending = False
+        self.committed_backend_selection = {
+            key: self.config.get(key, script.CONFIG_PADRAO.get(key))
+            for key in BACKEND_SELECTION_KEYS
+        }
         self.list_drag_index = None
         self.rename_panel_visible = False
         self.rename_inline_dirty = False
@@ -154,7 +167,12 @@ class PDFSheetUI:
         self.preview_final_ref = None
         self.preview_pagina_ref = None
         self.preview_display_size = (430, 300)
+        self.preview_area_size = (1290, 320)
+        self.preview_zoom = 1.0
+        self.preview_panel_restore_sash = None
+        self.image_list_restore_sash = None
 
+        self._configure_theme()
         self._build_ui()
         self._setup_menu()
         self._apply_window_bg()
@@ -171,6 +189,160 @@ class PDFSheetUI:
     @staticmethod
     def _image_key(imagem: Path):
         return script.normalizar_chave_imagem(imagem)
+
+    def _configure_theme(self):
+        self.colors = {
+            "ink": "#17313B",
+            "muted": "#61747C",
+            "canvas": "#F4F1EA",
+            "surface": "#FFFEFA",
+            "surface_alt": "#E9F0ED",
+            "line": "#D6DDD8",
+            "accent": "#007C72",
+            "accent_hover": "#00665E",
+            "warm": "#E7773C",
+            "warm_hover": "#C95F2B",
+            "nav": "#16343D",
+            "nav_soft": "#244B55",
+            "white": "#FFFFFF",
+        }
+        style = ttk.Style(self.root)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        self.root.option_add("*Font", ("Segoe UI", 10))
+        self.root.option_add("*TCombobox*Listbox.font", ("Segoe UI", 10))
+        self.root.option_add("*Listbox.font", ("Segoe UI", 10))
+
+        style.configure(".", background=self.colors["canvas"], foreground=self.colors["ink"])
+        style.configure("TFrame", background=self.colors["surface"])
+        style.configure("Canvas.TFrame", background=self.colors["canvas"])
+        style.configure("Surface.TFrame", background=self.colors["surface"])
+        style.configure("Toolbar.TFrame", background=self.colors["nav"])
+        style.configure("Status.TFrame", background=self.colors["surface_alt"])
+        style.configure(
+            "TLabel",
+            background=self.colors["surface"],
+            foreground=self.colors["ink"],
+            font=("Segoe UI", 10),
+        )
+        style.configure(
+            "Muted.TLabel",
+            foreground=self.colors["muted"],
+            font=("Segoe UI", 9),
+        )
+        style.configure(
+            "StatusMuted.TLabel",
+            background=self.colors["surface_alt"],
+            foreground=self.colors["muted"],
+            font=("Segoe UI", 9),
+        )
+        style.configure(
+            "SectionTitle.TLabel",
+            foreground=self.colors["ink"],
+            font=("Segoe UI Semibold", 12),
+        )
+        style.configure(
+            "CardTitle.TLabel",
+            background=self.colors["surface"],
+            foreground=self.colors["ink"],
+            font=("Segoe UI Semibold", 11),
+        )
+        style.configure(
+            "ApplyAll.TLabel",
+            foreground=self.colors["accent"],
+            font=("Segoe UI Semibold", 9),
+        )
+        style.configure(
+            "TLabelframe",
+            background=self.colors["surface"],
+            bordercolor=self.colors["line"],
+            borderwidth=1,
+            relief="solid",
+        )
+        style.configure(
+            "TLabelframe.Label",
+            background=self.colors["surface"],
+            foreground=self.colors["ink"],
+            font=("Segoe UI Semibold", 11),
+        )
+        style.configure(
+            "TButton",
+            padding=(10, 7),
+            borderwidth=0,
+            font=("Segoe UI Semibold", 9),
+        )
+        style.configure(
+            "Primary.TButton",
+            background=self.colors["warm"],
+            foreground=self.colors["white"],
+            padding=(16, 9),
+        )
+        style.map("Primary.TButton", background=[("active", self.colors["warm_hover"])])
+        style.configure(
+            "Accent.TButton",
+            background=self.colors["accent"],
+            foreground=self.colors["white"],
+        )
+        style.map("Accent.TButton", background=[("active", self.colors["accent_hover"])])
+        style.configure(
+            "Toolbar.TButton",
+            background=self.colors["nav_soft"],
+            foreground=self.colors["white"],
+            padding=(12, 8),
+        )
+        style.map("Toolbar.TButton", background=[("active", self.colors["accent"])])
+        style.configure(
+            "ListPane.TButton",
+            background="#DCEAE7",
+            foreground="#315B60",
+            padding=(9, 5),
+            font=("Segoe UI Semibold", 8),
+        )
+        style.map("ListPane.TButton", background=[("active", "#C9DEDA")])
+        style.configure(
+            "PreviewPane.TButton",
+            background="#EFE7DD",
+            foreground="#65584A",
+            padding=(9, 5),
+            font=("Segoe UI Semibold", 8),
+        )
+        style.map("PreviewPane.TButton", background=[("active", "#E2D6C7")])
+        style.configure(
+            "Danger.TButton",
+            background="#F6E5DD",
+            foreground="#8B3E22",
+        )
+        style.map("Danger.TButton", background=[("active", "#EECFBE")])
+        style.configure("TEntry", padding=6, fieldbackground=self.colors["white"])
+        style.configure("TCombobox", padding=5, fieldbackground=self.colors["white"])
+        style.configure("TSpinbox", padding=5, fieldbackground=self.colors["white"])
+        style.configure(
+            "TNotebook",
+            background=self.colors["canvas"],
+            borderwidth=0,
+            tabmargins=(0, 8, 0, 0),
+        )
+        style.configure(
+            "TNotebook.Tab",
+            padding=(18, 9),
+            font=("Segoe UI Semibold", 10),
+            background=self.colors["surface_alt"],
+            foreground=self.colors["muted"],
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", self.colors["surface"])],
+            foreground=[("selected", self.colors["accent"])],
+        )
+        style.configure(
+            "Horizontal.TProgressbar",
+            background=self.colors["accent"],
+            troughcolor=self.colors["line"],
+            borderwidth=0,
+        )
 
     def _setup_menu(self):
         menubar = tk.Menu(self.root)
@@ -211,35 +383,100 @@ class PDFSheetUI:
             pass
         try:
             if hasattr(self, "status_label"):
-                self.status_label.configure(bg=cor)
+                self.status_label.configure(bg=self.colors["surface_alt"])
         except Exception:
             pass
 
     def _build_ui(self):
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
+        self.root.rowconfigure(1, weight=1)
+
+        app_header = tk.Frame(self.root, bg=self.colors["nav"], padx=20, pady=12)
+        app_header.grid(row=0, column=0, sticky="ew")
+        app_header.columnconfigure(1, weight=1)
+
+        brand = tk.Frame(app_header, bg=self.colors["nav"])
+        brand.grid(row=0, column=0, sticky="w")
+        tk.Label(
+            brand,
+            text="imggrid2pdf",
+            bg=self.colors["nav"],
+            fg=self.colors["white"],
+            font=("Segoe UI Semibold", 16),
+        ).pack(anchor="w")
+        tk.Label(
+            brand,
+            text="IMAGENS PARA PDF",
+            bg=self.colors["nav"],
+            fg="#9FC5BF",
+            font=("Segoe UI Semibold", 8),
+        ).pack(anchor="w")
+
+        header_copy = tk.Frame(app_header, bg=self.colors["nav"])
+        header_copy.grid(row=0, column=1, sticky="w", padx=(26, 12))
+        tk.Label(
+            header_copy,
+            text="Prepare, revise e exporte suas pranchas",
+            bg=self.colors["nav"],
+            fg=self.colors["white"],
+            font=("Segoe UI Semibold", 13),
+        ).pack(anchor="w")
+        tk.Label(
+            header_copy,
+            text="Ajustes por imagem com prova visual antes do PDF.",
+            bg=self.colors["nav"],
+            fg="#BBD0CC",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(2, 0))
+
+        header_actions = ttk.Frame(app_header, style="Toolbar.TFrame")
+        header_actions.grid(row=0, column=2, sticky="e")
+        ttk.Button(
+            header_actions,
+            text="Escolher pasta",
+            command=self._pick_folder,
+            style="Toolbar.TButton",
+        ).pack(side="left", padx=3)
+        ttk.Button(
+            header_actions,
+            text="Recortar grade",
+            command=self._open_sheet_cropper,
+            style="Toolbar.TButton",
+        ).pack(side="left", padx=3)
+        ttk.Button(
+            header_actions,
+            text="Gerar PDF",
+            command=self._gerar_pdf_thread,
+            style="Primary.TButton",
+        ).pack(side="left", padx=(8, 0))
 
         self.main_pane = tk.PanedWindow(
             self.root,
             orient=tk.HORIZONTAL,
-            sashrelief=tk.RAISED,
-            sashwidth=8,
-            showhandle=True,
+            sashrelief=tk.FLAT,
+            sashwidth=6,
+            showhandle=False,
             opaqueresize=True,
+            bg=self.colors["line"],
+            bd=0,
         )
-        self.main_pane.grid(row=0, column=0, sticky="nsew")
+        self.main_pane.grid(row=1, column=0, sticky="nsew")
 
-        sidebar_outer = ttk.Frame(self.main_pane)
+        sidebar_outer = ttk.Frame(self.main_pane, style="Surface.TFrame")
         sidebar_outer.rowconfigure(0, weight=1)
         sidebar_outer.columnconfigure(0, weight=1)
 
-        sidebar_canvas = tk.Canvas(sidebar_outer, highlightthickness=0)
+        sidebar_canvas = tk.Canvas(
+            sidebar_outer,
+            highlightthickness=0,
+            bg=self.colors["surface"],
+        )
         sidebar_scrollbar = ttk.Scrollbar(sidebar_outer, orient="vertical", command=sidebar_canvas.yview)
         sidebar_canvas.configure(yscrollcommand=sidebar_scrollbar.set)
         sidebar_canvas.grid(row=0, column=0, sticky="nsew")
         sidebar_scrollbar.grid(row=0, column=1, sticky="ns")
 
-        painel_cfg = ttk.Frame(sidebar_canvas, padding=10)
+        painel_cfg = ttk.Frame(sidebar_canvas, padding=(14, 16), style="Surface.TFrame")
         sidebar_frame_id = sidebar_canvas.create_window((0, 0), window=painel_cfg, anchor="nw")
         painel_cfg.columnconfigure(1, weight=1)
 
@@ -282,12 +519,40 @@ class PDFSheetUI:
         sidebar_canvas.bind("<Enter>", bind_sidebar_scroll)
         sidebar_canvas.bind("<Leave>", unbind_sidebar_scroll)
 
-        visual = ttk.Frame(self.main_pane, padding=10)
+        visual = ttk.Frame(self.main_pane, padding=(14, 12), style="Canvas.TFrame")
         visual.columnconfigure(0, weight=1)
         visual.rowconfigure(0, weight=1)
 
-        self.main_pane.add(sidebar_outer, minsize=280)
+        self.main_pane.add(sidebar_outer, minsize=330, width=370)
         self.main_pane.add(visual)
+
+        status_bar = ttk.Frame(self.root, style="Status.TFrame", padding=(16, 7))
+        status_bar.grid(row=2, column=0, sticky="ew")
+        status_bar.columnconfigure(1, weight=1)
+        self.progress = ttk.Progressbar(
+            status_bar,
+            orient="horizontal",
+            mode="determinate",
+            maximum=100,
+            length=170,
+        )
+        self.progress.grid(row=0, column=0, sticky="w", padx=(0, 12))
+        self.status_var = tk.StringVar(value="Pronto")
+        self.status_label = tk.Label(
+            status_bar,
+            textvariable=self.status_var,
+            bg=self.colors["surface_alt"],
+            fg=self.colors["ink"],
+            font=("Segoe UI", 9),
+            justify="left",
+            anchor="w",
+        )
+        self.status_label.grid(row=0, column=1, sticky="ew")
+        ttk.Label(
+            status_bar,
+            text="F2 renomeia  |  Delete remove da lista",
+            style="StatusMuted.TLabel",
+        ).grid(row=0, column=2, sticky="e", padx=(12, 0))
 
         self.vars = {}
         self.global_sidebar_vars = {}
@@ -360,24 +625,24 @@ class PDFSheetUI:
             "tamanho_numero_relativo": ("tamanho_numero_relativo", "cor_numero"),
         }
 
-        status_box = ttk.Frame(painel_cfg)
-        status_box.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 10))
-        status_box.columnconfigure(0, weight=1)
-        self.progress = ttk.Progressbar(status_box, orient="horizontal", mode="determinate", maximum=100)
-        self.progress.grid(row=0, column=0, sticky="ew")
-        self.status_var = tk.StringVar(value="Pronto")
-        self.status_label = tk.Label(
-            status_box,
-            textvariable=self.status_var,
-            wraplength=300,
+        ttk.Label(
+            painel_cfg,
+            text="Ajustes",
+            style="SectionTitle.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            painel_cfg,
+            text="Duplo clique em um ajuste azul aplica o valor às outras imagens.",
+            style="Muted.TLabel",
+            wraplength=320,
             justify="left",
-            anchor="nw",
-            height=2,
-            bg=self.global_cfg.get("cor_fundo_janela", "#f0f0f0"),
-        )
-        self.status_label.grid(row=1, column=0, sticky="ew", pady=(3, 0))
+        ).grid(row=0, column=1, sticky="e", padx=(12, 0))
 
-        global_box = ttk.LabelFrame(painel_cfg, text="Layout da Página")
+        global_box = ttk.LabelFrame(
+            painel_cfg,
+            text="01  Composição da página",
+            padding=(12, 10),
+        )
         global_box.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 10))
         global_box.columnconfigure(1, weight=1)
 
@@ -415,7 +680,8 @@ class PDFSheetUI:
                 pass
 
         def make_apply_all_label(parent, text, key, row, column=0, sticky="w", pady=3):
-            lbl = ttk.Label(parent, text=text, cursor="hand2", foreground="#1f5aa6")
+            label_style = "ApplyAll.TLabel" if key in self.apply_all_label_keys else "TLabel"
+            lbl = ttk.Label(parent, text=text, cursor="hand2", style=label_style)
             lbl.grid(row=row, column=column, sticky=sticky, pady=pady)
             if key in self.apply_all_label_keys:
                 lbl.bind("<Double-Button-1>", lambda _e, k=key: self._apply_param_to_other_images(k))
@@ -431,30 +697,39 @@ class PDFSheetUI:
             widget.bind("<Enter>", lambda _e, k=key: self._show_apply_all_hint(k), add="+")
             self._bind_tooltip(widget, key, apply_all=True)
 
+        appearance_box = ttk.LabelFrame(
+            painel_cfg,
+            text="02  Aparência da imagem selecionada",
+            padding=(12, 10),
+        )
+        appearance_box.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+        appearance_box.columnconfigure(1, weight=1)
+        control_parent = appearance_box
+
         def add_entry(label, key, row):
-            lbl = make_apply_all_label(painel_cfg, label, key, row)
+            lbl = make_apply_all_label(control_parent, label, key, row)
             var = tk.StringVar(value=str(self.config.get(key, "")))
             self.vars[key] = var
-            ent = ttk.Entry(painel_cfg, textvariable=var, width=36)
+            ent = ttk.Entry(control_parent, textvariable=var, width=36)
             ent.grid(row=row, column=1, sticky="ew", pady=3)
             self._bind_tooltip(lbl, key)
             self._bind_tooltip(ent, key)
             return ent
 
         def add_spin(label, key, row, frm, to):
-            lbl = make_apply_all_label(painel_cfg, label, key, row)
+            lbl = make_apply_all_label(control_parent, label, key, row)
             var = tk.IntVar(value=int(self.config.get(key, 0)))
             self.vars[key] = var
-            sp = ttk.Spinbox(painel_cfg, from_=frm, to=to, textvariable=var, width=10)
+            sp = ttk.Spinbox(control_parent, from_=frm, to=to, textvariable=var, width=10)
             sp.grid(row=row, column=1, sticky="w", pady=3)
             self._bind_tooltip(lbl, key)
             self._bind_tooltip(sp, key)
 
         def add_slider_int(label, key, row, frm, to, apply_all=False):
-            lbl = make_apply_all_label(painel_cfg, label, key, row)
+            lbl = make_apply_all_label(control_parent, label, key, row)
             var = tk.IntVar(value=int(self.config.get(key, 0)))
             self.vars[key] = var
-            frame = ttk.Frame(painel_cfg)
+            frame = ttk.Frame(control_parent)
             frame.grid(row=row, column=1, sticky="ew", pady=3)
             frame.columnconfigure(0, weight=1)
             scl = ttk.Scale(frame, from_=frm, to=to, variable=var, orient="horizontal")
@@ -468,10 +743,10 @@ class PDFSheetUI:
             return frame
 
         def add_slider_float(label, key, row, frm, to, apply_all=False):
-            lbl = make_apply_all_label(painel_cfg, label, key, row)
+            lbl = make_apply_all_label(control_parent, label, key, row)
             var = tk.DoubleVar(value=float(self.config.get(key, 0.0)))
             self.vars[key] = var
-            frame = ttk.Frame(painel_cfg)
+            frame = ttk.Frame(control_parent)
             frame.grid(row=row, column=1, sticky="ew", pady=3)
             frame.columnconfigure(0, weight=1)
             scl = ttk.Scale(frame, from_=frm, to=to, variable=var, orient="horizontal")
@@ -484,10 +759,10 @@ class PDFSheetUI:
             self._bind_tooltip(val, key)
 
         def add_color_picker(label, key, row):
-            lbl = make_apply_all_label(painel_cfg, label, key, row)
+            lbl = make_apply_all_label(control_parent, label, key, row)
             var = tk.StringVar(value=str(self.config.get(key, "#000000")))
             self.vars[key] = var
-            frame = ttk.Frame(painel_cfg)
+            frame = ttk.Frame(control_parent)
             frame.grid(row=row, column=1, sticky="w", pady=3)
             swatch = tk.Label(frame, width=3, relief="solid", bd=1, bg=var.get())
             swatch.pack(side="left")
@@ -553,11 +828,11 @@ class PDFSheetUI:
             return sp
 
         def add_float(label, key, row):
-            make_apply_all_label(painel_cfg, label, key, row)
+            make_apply_all_label(control_parent, label, key, row)
             var = tk.DoubleVar(value=float(self.config.get(key, 0.0)))
             self.vars[key] = var
             sp = ttk.Spinbox(
-                painel_cfg,
+                control_parent,
                 from_=0.0,
                 to=1.0,
                 increment=0.01,
@@ -566,27 +841,46 @@ class PDFSheetUI:
             )
             sp.grid(row=row, column=1, sticky="w", pady=3)
 
-        row = 2
+        row = 0
 
         frame_borda = add_slider_int("Espessura borda", "borda_preta_espessura", row, 1, 30, apply_all=True)
         add_inline_color(frame_borda, "cor_borda")
         row += 1
-        lbl_estilo_borda = make_apply_all_label(painel_cfg, "Estilo borda", "estilo_borda", row)
-        frame_estilo_borda = ttk.Frame(painel_cfg)
-        frame_estilo_borda.grid(row=row, column=1, sticky="w", pady=3)
-        add_inline_combo(frame_estilo_borda, "estilo_borda", script.listar_estilos_borda(), width=12, row=0, column=0)
-        lbl_raio = ttk.Label(frame_estilo_borda, text="Raio")
-        lbl_raio.grid(row=0, column=1, padx=(10, 2), sticky="e")
+        lbl_estilo_borda = make_apply_all_label(control_parent, "Estilo borda", "estilo_borda", row)
+        frame_estilo_borda = ttk.Frame(control_parent)
+        frame_estilo_borda.grid(row=row, column=1, sticky="ew", pady=3)
+        frame_estilo_borda.columnconfigure(0, weight=1)
+        add_inline_combo(
+            frame_estilo_borda,
+            "estilo_borda",
+            script.listar_estilos_borda(),
+            width=12,
+            row=0,
+            column=0,
+        ).grid_configure(sticky="ew", padx=0)
         self._bind_tooltip(lbl_estilo_borda, "estilo_borda")
+        row += 1
+        lbl_raio = make_apply_all_label(control_parent, "Raio dos cantos", "raio_borda", row)
+        self.radius_spin = ttk.Spinbox(
+            control_parent,
+            from_=0,
+            to=120,
+            textvariable=self.vars.setdefault(
+                "raio_borda",
+                tk.IntVar(value=int(self.config.get("raio_borda", 0))),
+            ),
+            width=8,
+        )
+        self.radius_spin.grid(row=row, column=1, sticky="ew", pady=3)
+        bind_apply_all_widget(self.radius_spin, "raio_borda")
         self._bind_tooltip(lbl_raio, "raio_borda")
-        add_inline_spin(frame_estilo_borda, "raio_borda", 0, 120, width=5, row=0, column=2)
         row += 1
         add_slider_float("Margem interna", "margem_interna_quadrado", row, 0.0, 0.25, apply_all=True)
         row += 1
 
-        lbl_tnr = make_apply_all_label(painel_cfg, "Tamanho número (%)", "tamanho_numero_relativo", row)
+        lbl_tnr = make_apply_all_label(control_parent, "Tamanho número (%)", "tamanho_numero_relativo", row)
         self.vars["tamanho_numero_relativo"] = tk.DoubleVar(value=float(self.config.get("tamanho_numero_relativo", 0.085)))
-        frame_num = ttk.Frame(painel_cfg)
+        frame_num = ttk.Frame(control_parent)
         frame_num.grid(row=row, column=1, sticky="ew", pady=3)
         frame_num.columnconfigure(0, weight=1)
         scl_num = ttk.Scale(frame_num, from_=0.03, to=0.25, variable=self.vars["tamanho_numero_relativo"], orient="horizontal")
@@ -607,6 +901,17 @@ class PDFSheetUI:
         row += 1
         add_slider_int("Glow opacidade", "numero_glow_opacidade", row, 0, 255, apply_all=True)
         row += 1
+
+        background_box = ttk.LabelFrame(
+            painel_cfg,
+            text="03  Extração de fundo",
+            padding=(12, 10),
+        )
+        background_box.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+        background_box.columnconfigure(1, weight=1)
+        control_parent = background_box
+        row = 0
+
         add_slider_int("Limiar alpha", "limiar_alpha", row, 0, 255, apply_all=True)
         row += 1
         add_slider_int("Tolerância fundo", "tolerancia_fundo", row, 0, 80, apply_all=True)
@@ -615,7 +920,7 @@ class PDFSheetUI:
             value=str(self.config.get("remover_fundo_modo", "todos")) != "desligado"
         )
         chk_rf = ttk.Checkbutton(
-            painel_cfg,
+            control_parent,
             text="Remover fundo (imagem selecionada)",
             variable=self.vars["remover_fundo_local"],
         )
@@ -623,12 +928,12 @@ class PDFSheetUI:
         self._bind_tooltip(chk_rf, "remover_fundo_local")
         row += 1
 
-        make_apply_all_label(painel_cfg, "Backend fundo", "backend_remocao_fundo", row)
+        make_apply_all_label(control_parent, "Backend fundo", "backend_remocao_fundo", row)
         self.vars["backend_remocao_fundo"] = tk.StringVar(
             value=str(self.config.get("backend_remocao_fundo", "rembg"))
         )
         cb_backend = ttk.Combobox(
-            painel_cfg,
+            control_parent,
             textvariable=self.vars["backend_remocao_fundo"],
             values=script.listar_backends_remocao_fundo(),
             state="readonly",
@@ -637,7 +942,7 @@ class PDFSheetUI:
         self._bind_tooltip(cb_backend, "backend_remocao_fundo")
         row += 1
 
-        self.backend_rembg_frame = ttk.Frame(painel_cfg)
+        self.backend_rembg_frame = ttk.Frame(control_parent)
         self.backend_rembg_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=0)
         self.backend_rembg_frame.columnconfigure(1, weight=1)
         make_apply_all_label(self.backend_rembg_frame, "Modelo rembg", "modelo_remocao_fundo", 0)
@@ -702,7 +1007,7 @@ class PDFSheetUI:
         ttk.Label(erode_frame, textvariable=self.vars["rembg_erode_size"], width=4).grid(row=0, column=1, padx=(6,0))
         row += 1
 
-        self.backend_inspy_frame = ttk.Frame(painel_cfg)
+        self.backend_inspy_frame = ttk.Frame(control_parent)
         self.backend_inspy_frame.grid(row=row, column=0, columnspan=2, sticky="ew", pady=0)
         self.backend_inspy_frame.columnconfigure(1, weight=1)
         make_apply_all_label(self.backend_inspy_frame, "Modo InSPyReNet", "modo_inspyrenet", 0)
@@ -731,39 +1036,81 @@ class PDFSheetUI:
         self._bind_tooltip(cb_inspy_dev, "inspyrenet_device")
         row += 1
 
-        botoes = ttk.Frame(painel_cfg)
-        botoes.grid(row=row, column=0, columnspan=3, sticky="ew", pady=8)
+        backend_apply = ttk.Frame(control_parent)
+        backend_apply.grid(row=row, column=0, columnspan=2, sticky="ew", pady=(8, 2))
+        backend_apply.columnconfigure(0, weight=1)
+        self.backend_apply_button = ttk.Button(
+            backend_apply,
+            text="Aplicar backend/modelo",
+            command=self._apply_backend_selection,
+            style="Accent.TButton",
+        )
+        self.backend_apply_button.grid(row=0, column=0, sticky="ew")
+        self.backend_apply_button.state(["disabled"])
+        self.backend_selection_status_var = tk.StringVar(
+            value="Alterar as opções acima não executa nem baixa modelos."
+        )
+        ttk.Label(
+            backend_apply,
+            textvariable=self.backend_selection_status_var,
+            style="Muted.TLabel",
+            wraplength=300,
+            justify="left",
+        ).grid(row=1, column=0, sticky="ew", pady=(5, 0))
+
+        botoes = ttk.LabelFrame(
+            painel_cfg,
+            text="04  Ações rápidas",
+            padding=(10, 8),
+        )
+        botoes.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(0, 8))
         botoes.columnconfigure(0, weight=1)
         botoes.columnconfigure(1, weight=1)
-        ttk.Button(botoes, text="Salvar config global", command=self._save_config).grid(row=0, column=0, sticky="ew", padx=3, pady=2)
-        ttk.Button(botoes, text="Resetar para Padrão", command=self._reset_left_defaults).grid(row=0, column=1, sticky="ew", padx=3, pady=2)
-        ttk.Button(botoes, text="Atualizar preview", command=self._refresh_all_previews).grid(row=1, column=0, sticky="ew", padx=3, pady=2)
-        ttk.Button(botoes, text="Gerar PDF", command=self._gerar_pdf_thread).grid(row=1, column=1, sticky="ew", padx=3, pady=2)
+        ttk.Button(botoes, text="Salvar padrões", command=self._save_config).grid(
+            row=0, column=0, sticky="ew", padx=3, pady=3
+        )
+        ttk.Button(botoes, text="Restaurar imagem", command=self._reset_left_defaults).grid(
+            row=0, column=1, sticky="ew", padx=3, pady=3
+        )
+        ttk.Button(
+            botoes,
+            text="Atualizar prévias",
+            command=self._refresh_all_previews,
+            style="Accent.TButton",
+        ).grid(row=1, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
 
         self.visual_pane = tk.PanedWindow(
             visual,
             orient=tk.VERTICAL,
-            sashrelief=tk.RAISED,
-            sashwidth=8,
-            showhandle=True,
+            sashrelief=tk.FLAT,
+            sashwidth=6,
+            showhandle=False,
             opaqueresize=True,
+            bg=self.colors["line"],
+            bd=0,
         )
         self.visual_pane.grid(row=0, column=0, sticky="nsew")
 
-        topo = ttk.Frame(self.visual_pane)
+        topo = ttk.Frame(self.visual_pane, style="Surface.TFrame", padding=(14, 12))
         topo.columnconfigure(1, weight=1)
         topo.columnconfigure(0, weight=1)
         topo.columnconfigure(2, weight=1)
         topo.rowconfigure(2, weight=1)
 
-        header = ttk.Frame(topo)
-        header.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 4))
+        header = ttk.Frame(topo, style="Surface.TFrame")
+        header.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 8))
         header.columnconfigure(1, weight=1)
-        ttk.Label(header, text="Imagens:").grid(row=0, column=0, sticky="w")
+        ttk.Label(header, text="Fila de imagens", style="SectionTitle.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        self.image_count_var = tk.StringVar(value="0 imagens")
+        ttk.Label(header, textvariable=self.image_count_var, style="Muted.TLabel").grid(
+            row=1, column=0, sticky="w"
+        )
 
-        tools = ttk.Frame(header)
-        tools.grid(row=0, column=1, sticky="e")
-        ttk.Label(tools, text="Ordem").pack(side="left", padx=(0, 4))
+        tools = ttk.Frame(header, style="Surface.TFrame")
+        tools.grid(row=0, column=1, rowspan=2, sticky="e")
+        ttk.Label(tools, text="Ordenar por").pack(side="left", padx=(0, 4))
         self.sort_mode_var = tk.StringVar(value="Manual")
         sort_combo = ttk.Combobox(
             tools,
@@ -774,13 +1121,21 @@ class PDFSheetUI:
         )
         sort_combo.pack(side="left", padx=(0, 4))
         sort_combo.bind("<<ComboboxSelected>>", lambda _e: self._apply_image_sort())
-        ttk.Button(tools, text="Renomear", command=self._toggle_rename_panel).pack(side="left", padx=(0, 4))
-        exclude_btn = ttk.Button(tools, text="Remover da lista", command=self._exclude_selected_images)
+        ttk.Button(tools, text="Renomear", command=self._toggle_rename_panel).pack(
+            side="left", padx=(0, 4)
+        )
+        exclude_btn = ttk.Button(
+            tools,
+            text="Remover",
+            command=self._exclude_selected_images,
+            style="Danger.TButton",
+        )
         exclude_btn.pack(side="left", padx=(0, 4))
         self._bind_static_tooltip(
             exclude_btn,
             "Move as imagens para a subpasta _excluded_images sem apagar os arquivos.",
         )
+        ttk.Label(tools, text="Número:").pack(side="left", padx=(6, 3))
         for label, code in (("SE", "SE"), ("SD", "SD"), ("IE", "IE"), ("ID", "ID")):
             btn = ttk.Button(tools, text=label, width=3, command=lambda c=code: self._apply_position_code_to_selected(c))
             btn.pack(side="left", padx=1)
@@ -790,7 +1145,6 @@ class PDFSheetUI:
                 "IE": "Inferior esquerdo",
                 "ID": "Inferior direito",
             }[code])
-
         self.rename_panel = ttk.Frame(topo)
         self.rename_panel.columnconfigure(5, weight=1)
         ttk.Label(self.rename_panel, text="Nome").grid(row=0, column=0, sticky="w", padx=(0, 4))
@@ -819,8 +1173,30 @@ class PDFSheetUI:
         ttk.Button(self.rename_panel, text="Selecionadas", command=lambda: self._renumber_images(False)).grid(row=1, column=8, sticky="e", padx=2)
         ttk.Button(self.rename_panel, text="Todas", command=lambda: self._renumber_images(True)).grid(row=1, column=9, sticky="e", padx=2)
 
-        self.listbox = tk.Listbox(topo, height=6, exportselection=False, selectmode=tk.EXTENDED)
-        self.listbox.grid(row=2, column=0, columnspan=3, sticky="nsew")
+        list_shell = ttk.Frame(topo, style="Surface.TFrame")
+        list_shell.grid(row=2, column=0, columnspan=3, sticky="nsew")
+        list_shell.columnconfigure(0, weight=1)
+        list_shell.rowconfigure(0, weight=1)
+        self.listbox = tk.Listbox(
+            list_shell,
+            height=6,
+            exportselection=False,
+            selectmode=tk.EXTENDED,
+            bg=self.colors["white"],
+            fg=self.colors["ink"],
+            selectbackground=self.colors["accent"],
+            selectforeground=self.colors["white"],
+            activestyle="none",
+            relief="flat",
+            bd=0,
+            highlightthickness=1,
+            highlightbackground=self.colors["line"],
+            highlightcolor=self.colors["accent"],
+        )
+        self.listbox.grid(row=0, column=0, sticky="nsew")
+        list_scroll = ttk.Scrollbar(list_shell, orient="vertical", command=self.listbox.yview)
+        list_scroll.grid(row=0, column=1, sticky="ns")
+        self.listbox.configure(yscrollcommand=list_scroll.set)
         self.listbox.bind("<<ListboxSelect>>", lambda e: self._on_select_image())
         self.listbox.bind("<Double-Button-1>", self._start_inline_rename)
         self.listbox.bind("<ButtonPress-1>", self._on_listbox_drag_start)
@@ -828,17 +1204,83 @@ class PDFSheetUI:
         self.listbox.bind("<ButtonRelease-1>", self._on_listbox_drag_end)
         self.listbox.bind("<Delete>", self._exclude_selected_images)
         self.info_img_var = tk.StringVar(value="")
-        ttk.Label(topo, textvariable=self.info_img_var).grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ttk.Label(topo, textvariable=self.info_img_var, style="Muted.TLabel").grid(
+            row=3, column=0, columnspan=3, sticky="w", pady=(7, 0)
+        )
 
-        b_ov = ttk.Frame(topo)
-        b_ov.grid(row=4, column=0, columnspan=3, sticky="w", pady=(6, 0))
-        ttk.Button(b_ov, text="Salvar Ajustes da Imagem em Global", command=self._apply_current_image_to_global).pack(side="left", padx=2)
-        ttk.Button(b_ov, text="Limpar Override da Imagem", command=self._clear_image_override).pack(side="left", padx=2)
-        ttk.Button(b_ov, text="Resetar Todas", command=self._reset_all_image_overrides).pack(side="left", padx=2)
+        b_ov = ttk.Frame(topo, style="Surface.TFrame")
+        b_ov.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        ttk.Label(b_ov, text="Ajustes:", style="Muted.TLabel").pack(side="left", padx=(0, 4))
+        ttk.Button(
+            b_ov,
+            text="Usar como padrão",
+            command=self._apply_current_image_to_global,
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            b_ov,
+            text="Limpar desta imagem",
+            command=self._clear_image_override,
+        ).pack(side="left", padx=2)
+        ttk.Button(
+            b_ov,
+            text="Limpar todos",
+            command=self._reset_all_image_overrides,
+        ).pack(side="left", padx=2)
 
-        prev_frame = ttk.Frame(self.visual_pane)
+        self.workspace_tabs = ttk.Notebook(self.visual_pane)
+        tab_controls = ttk.Frame(self.workspace_tabs, style="Surface.TFrame")
+        self.toggle_image_list_button = ttk.Button(
+            tab_controls,
+            text="Recolher lista",
+            command=self._toggle_image_list_panel,
+            style="ListPane.TButton",
+        )
+        self.toggle_image_list_button.pack(side="left", padx=2)
+        self.toggle_preview_panel_button = ttk.Button(
+            tab_controls,
+            text="Recolher prévias",
+            command=self._toggle_preview_panel,
+            style="PreviewPane.TButton",
+        )
+        self.toggle_preview_panel_button.pack(side="left", padx=2)
+        tab_controls.place(relx=1.0, x=-8, y=5, anchor="ne")
+
+        prev_frame = ttk.Frame(self.workspace_tabs, padding=(12, 10))
         prev_frame.columnconfigure(0, weight=1)
         prev_frame.rowconfigure(1, weight=1)
+        preview_tools = ttk.Frame(prev_frame)
+        preview_tools.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        preview_tools.columnconfigure(0, weight=1)
+        ttk.Label(
+            preview_tools,
+            text="Comparação da imagem selecionada",
+            style="SectionTitle.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Label(preview_tools, text="Zoom", style="Muted.TLabel").grid(
+            row=0, column=1, padx=(12, 4)
+        )
+        self.preview_zoom_var = tk.StringVar(value="100%")
+        ttk.Button(
+            preview_tools,
+            text="-",
+            width=3,
+            command=lambda: self._adjust_preview_zoom(-0.1),
+        ).grid(row=0, column=2, padx=2)
+        ttk.Label(preview_tools, textvariable=self.preview_zoom_var, width=5).grid(
+            row=0, column=3
+        )
+        ttk.Button(
+            preview_tools,
+            text="+",
+            width=3,
+            command=lambda: self._adjust_preview_zoom(0.1),
+        ).grid(row=0, column=4, padx=2)
+        ttk.Button(
+            preview_tools,
+            text="Ajustar",
+            command=self._reset_preview_zoom,
+        ).grid(row=0, column=5, padx=(2, 0))
+
         previews_grid = ttk.Frame(prev_frame)
         previews_grid.grid(row=1, column=0, sticky="nsew")
         previews_grid.columnconfigure(0, weight=1, uniform="preview")
@@ -846,66 +1288,112 @@ class PDFSheetUI:
         previews_grid.columnconfigure(2, weight=1, uniform="preview")
         previews_grid.rowconfigure(0, weight=1)
 
-        titles = ttk.Frame(prev_frame)
-        titles.grid(row=0, column=0, sticky="ew")
-        titles.columnconfigure(0, weight=1, uniform="preview")
-        titles.columnconfigure(1, weight=1, uniform="preview")
-        titles.columnconfigure(2, weight=1, uniform="preview")
-        ttk.Label(titles, text="Original").grid(row=0, column=0, sticky="w")
-        ttk.Label(titles, text="Recorte (fundo removido)").grid(row=0, column=1, sticky="w")
-        ttk.Label(titles, text="Resultado final da célula").grid(row=0, column=2, sticky="w")
-
-        pane_o = ttk.Frame(previews_grid)
+        pane_o = ttk.LabelFrame(previews_grid, text="1  Original", padding=8)
         pane_o.columnconfigure(0, weight=1)
         pane_o.rowconfigure(0, weight=1)
-        self.lbl_original = ttk.Label(pane_o)
-        self.lbl_original.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self.lbl_original = ttk.Label(pane_o, anchor="center")
+        self.lbl_original.grid(row=0, column=0, sticky="nsew")
 
-        pane_c = ttk.Frame(previews_grid)
+        pane_c = ttk.LabelFrame(previews_grid, text="2  Fundo removido", padding=8)
         pane_c.columnconfigure(0, weight=1)
         pane_c.rowconfigure(0, weight=1)
-        self.lbl_crop = ttk.Label(pane_c)
-        self.lbl_crop.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
+        self.lbl_crop = ttk.Label(pane_c, anchor="center")
+        self.lbl_crop.grid(row=0, column=0, sticky="nsew")
 
-        pane_f = ttk.Frame(previews_grid)
+        pane_f = ttk.LabelFrame(previews_grid, text="3  Célula final", padding=8)
         pane_f.columnconfigure(0, weight=1)
         pane_f.rowconfigure(0, weight=1)
-        self.lbl_final = ttk.Label(pane_f)
-        self.lbl_final.grid(row=0, column=0, sticky="nsew", padx=4, pady=4)
-        pane_o.grid(row=0, column=0, sticky="nsew")
-        pane_c.grid(row=0, column=1, sticky="nsew")
-        pane_f.grid(row=0, column=2, sticky="nsew")
+        self.lbl_final = ttk.Label(pane_f, anchor="center")
+        self.lbl_final.grid(row=0, column=0, sticky="nsew")
+        pane_o.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        pane_c.grid(row=0, column=1, sticky="nsew", padx=6)
+        pane_f.grid(row=0, column=2, sticky="nsew", padx=(6, 0))
 
-        page_frame = ttk.Frame(self.visual_pane)
+        page_frame = ttk.Frame(self.workspace_tabs, padding=(12, 10))
         page_frame.columnconfigure(0, weight=1)
         page_frame.rowconfigure(1, weight=1)
 
         ctrls = ttk.Frame(page_frame)
-        ctrls.grid(row=0, column=0, sticky="ew")
+        ctrls.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         self.page_info_var = tk.StringVar(value="Página 0/0")
         self.page_zoom_var = tk.StringVar(value="100%")
-        ttk.Button(ctrls, text="<<", command=lambda: self._mudar_pagina(-1)).pack(side="left")
-        ttk.Button(ctrls, text=">>", command=lambda: self._mudar_pagina(1)).pack(side="left")
-        ttk.Button(ctrls, text="Renderizar prévia de página", command=self._render_page_preview_thread).pack(side="left", padx=8)
-        ttk.Label(ctrls, textvariable=self.page_info_var).pack(side="left", padx=10)
+        ttk.Button(ctrls, text="Anterior", command=lambda: self._mudar_pagina(-1)).pack(side="left")
+        ttk.Button(ctrls, text="Próxima", command=lambda: self._mudar_pagina(1)).pack(
+            side="left", padx=(4, 0)
+        )
+        ttk.Button(
+            ctrls,
+            text="Renderizar página",
+            command=self._render_page_preview_thread,
+            style="Accent.TButton",
+        ).pack(side="left", padx=10)
+        ttk.Label(ctrls, textvariable=self.page_info_var, style="SectionTitle.TLabel").pack(
+            side="left", padx=10
+        )
+        ttk.Label(ctrls, text="Zoom", style="Muted.TLabel").pack(side="left", padx=(12, 4))
         ttk.Button(ctrls, text="-", width=3, command=lambda: self._ajustar_zoom_pagina(-0.1)).pack(side="left", padx=(10, 2))
         ttk.Label(ctrls, textvariable=self.page_zoom_var, width=5).pack(side="left")
         ttk.Button(ctrls, text="+", width=3, command=lambda: self._ajustar_zoom_pagina(0.1)).pack(side="left", padx=2)
-        ttk.Button(ctrls, text="100%", width=5, command=self._resetar_zoom_pagina).pack(side="left", padx=(2, 0))
+        ttk.Button(ctrls, text="Ajustar", command=self._resetar_zoom_pagina).pack(side="left", padx=(2, 0))
+        ttk.Label(
+            ctrls,
+            text="Roda: vertical  |  Shift + roda: horizontal",
+            style="Muted.TLabel",
+        ).pack(side="right")
 
-        self.lbl_page = ttk.Label(page_frame)
-        self.lbl_page.grid(row=1, column=0, sticky="nsew", pady=4)
-        self.lbl_page.bind("<Button-1>", self._on_click_page_preview)
+        page_proof = ttk.LabelFrame(page_frame, text="Prova de impressão", padding=8)
+        page_proof.grid(row=1, column=0, sticky="nsew")
+        page_proof.columnconfigure(0, weight=1)
+        page_proof.rowconfigure(0, weight=1)
+        self.page_canvas = tk.Canvas(
+            page_proof,
+            bg="#DCE4E1",
+            bd=0,
+            highlightthickness=0,
+            xscrollincrement=12,
+            yscrollincrement=12,
+        )
+        page_scroll_y = ttk.Scrollbar(
+            page_proof,
+            orient="vertical",
+            command=self.page_canvas.yview,
+        )
+        page_scroll_x = ttk.Scrollbar(
+            page_proof,
+            orient="horizontal",
+            command=self.page_canvas.xview,
+        )
+        self.page_canvas.configure(
+            xscrollcommand=page_scroll_x.set,
+            yscrollcommand=page_scroll_y.set,
+        )
+        self.page_canvas.grid(row=0, column=0, sticky="nsew")
+        page_scroll_y.grid(row=0, column=1, sticky="ns")
+        page_scroll_x.grid(row=1, column=0, sticky="ew")
+        self.page_canvas.bind("<Button-1>", self._on_click_page_preview)
+        self.page_canvas.bind("<Configure>", self._on_page_canvas_resize)
+        self.page_canvas.bind("<MouseWheel>", self._scroll_page_preview)
+        self.page_canvas.bind("<Shift-MouseWheel>", self._scroll_page_preview_horizontal)
+        self.page_canvas.bind("<Button-4>", lambda _event: self.page_canvas.yview_scroll(-3, "units"))
+        self.page_canvas.bind("<Button-5>", lambda _event: self.page_canvas.yview_scroll(3, "units"))
 
-        self.visual_pane.add(topo, minsize=120)
-        self.visual_pane.add(prev_frame, minsize=180)
-        self.visual_pane.add(page_frame, minsize=180)
+        self.workspace_tabs.add(prev_frame, text="Editar imagem")
+        self.workspace_tabs.add(page_frame, text="Prévia da página")
+        tab_controls.lift()
+        self.visual_pane.add(topo, minsize=48)
+        self.visual_pane.add(self.workspace_tabs, minsize=48)
 
         previews_grid.bind("<Configure>", self._on_preview_area_resize)
 
-        for v in self.vars.values():
+        for key, v in self.vars.items():
             try:
-                v.trace_add("write", self._on_config_change)
+                v.trace_add(
+                    "write",
+                    lambda *_args, changed_key=key: self._on_config_change(
+                        *_args,
+                        changed_key=changed_key,
+                    ),
+                )
             except Exception:
                 pass
         try:
@@ -1068,7 +1556,7 @@ class PDFSheetUI:
             self.page_preview_meta = None
             self.preview_pagina_ref = None
             self.dirty_page_images = {self._image_key(path) for path in self.imagens}
-            self.lbl_page.configure(image="")
+            self._clear_page_preview_canvas()
             self.page_info_var.set("Página 0/0")
 
             remaining_selection = []
@@ -1122,6 +1610,9 @@ class PDFSheetUI:
         self.listbox.delete(0, tk.END)
         for p in self.imagens:
             self.listbox.insert(tk.END, p.name)
+        if hasattr(self, "image_count_var"):
+            count = len(self.imagens)
+            self.image_count_var.set(f"{count} imagem" if count == 1 else f"{count} imagens")
 
         selected_any = False
         for idx, path in enumerate(self.imagens):
@@ -1144,7 +1635,7 @@ class PDFSheetUI:
             self._render_page_preview_thread()
         else:
             self.page_info_var.set("Página 0/0")
-            self.lbl_page.configure(image="")
+            self._clear_page_preview_canvas()
 
     def _apply_image_sort(self):
         if not self.imagens:
@@ -1347,7 +1838,7 @@ class PDFSheetUI:
         self.paginas_cache = []
         self.page_preview_meta = None
         self.preview_pagina_ref = None
-        self.lbl_page.configure(image="")
+        self._clear_page_preview_canvas()
         self.dirty_page_images = {self._image_key(p) for p in self.imagens}
         self._refresh_image_listbox(selected_after)
         self._on_select_image()
@@ -1358,6 +1849,9 @@ class PDFSheetUI:
 
     def _apply_param_to_other_images(self, key, value=None):
         if self.imagem_atual is None or not self.imagens:
+            return
+        if key in BACKEND_SELECTION_KEYS and self.backend_selection_pending:
+            self.status_var.set("Aplique a seleção de backend/modelo antes de copiá-la para outras imagens.")
             return
         selected_key = self._image_key(self.imagem_atual)
         cfg_atual = self._collect_vars_as_cfg()
@@ -1400,22 +1894,137 @@ class PDFSheetUI:
                 self.status_var.set(f"Valor de '{key}' aplicado a {changed} outras imagens.")
             self._refresh_all_previews()
 
+    def _reset_image_param_to_global(self, key):
+        if self.imagem_atual is None or key not in IMAGE_OVERRIDE_KEYS:
+            return "break"
+
+        image_key = self._image_key(self.imagem_atual)
+        override = dict(self.image_overrides.get(image_key, {}))
+        if key not in override:
+            self.status_var.set(f"'{key}' já está usando o padrão global.")
+            return "break"
+
+        override.pop(key, None)
+        if override:
+            self.image_overrides[image_key] = override
+        else:
+            self.image_overrides.pop(image_key, None)
+        self._save_overrides()
+
+        self.dirty_page_images.add(image_key)
+        self.preview_cache.clear()
+        self.page_cache.clear()
+        self.rembg_cache.clear()
+        self.raw_cache.clear()
+        self.figure_cache.clear()
+        self.preview_raw_cache.clear()
+        self._refresh_controls_for_mode()
+        self._refresh_all_previews()
+        self.status_var.set(f"'{key}' voltou ao padrão global.")
+        return "break"
+
     def _on_preview_area_resize(self, event):
-        width = max(120, int(event.width // 3) - 16)
-        height = max(120, int(event.height) - 12)
+        self.preview_area_size = (max(1, int(event.width)), max(1, int(event.height)))
+        self._update_preview_display_size()
+
+    def _update_preview_display_size(self):
+        area_width, area_height = self.preview_area_size
+        width = max(24, int((area_width // 3 - 16) * self.preview_zoom))
+        height = max(24, int((area_height - 12) * self.preview_zoom))
         new_size = (width, height)
         if new_size == self.preview_display_size:
             return
         self.preview_display_size = new_size
         if self.preview_resize_after_id is not None:
             self.root.after_cancel(self.preview_resize_after_id)
-        self.preview_resize_after_id = self.root.after(120, self._refresh_image_preview_async)
+        self.preview_resize_after_id = self.root.after(120, self._refresh_image_preview_when_ready)
+
+    def _adjust_preview_zoom(self, delta):
+        self.preview_zoom = max(0.25, min(1.0, self.preview_zoom + delta))
+        self.preview_zoom_var.set(f"{int(round(self.preview_zoom * 100))}%")
+        self._update_preview_display_size()
+        self._on_layout_changed()
+
+    def _reset_preview_zoom(self):
+        self.preview_zoom = 1.0
+        self.preview_zoom_var.set("100%")
+        self._update_preview_display_size()
+        self._on_layout_changed()
+
+    def _toggle_preview_panel(self):
+        self.root.update_idletasks()
+        total_height = max(1, self.visual_pane.winfo_height())
+        current = self._get_sash_pos(self.visual_pane, 0)
+        collapsed = max(120, total_height - 52)
+        if current >= total_height - 100:
+            restore = self.preview_panel_restore_sash
+            if restore is None:
+                restore = max(160, int(total_height * 0.34))
+            target = min(restore, max(120, total_height - 180))
+        else:
+            self.preview_panel_restore_sash = current
+            target = collapsed
+        self._set_sash_pos(self.visual_pane, 0, target)
+        self._sync_pane_toggle_labels(target)
+        self._on_layout_changed()
+
+    def _toggle_image_list_panel(self):
+        self.root.update_idletasks()
+        total_height = max(1, self.visual_pane.winfo_height())
+        current = self._get_sash_pos(self.visual_pane, 0)
+        if current <= 90:
+            restore = self.image_list_restore_sash
+            if restore is None:
+                restore = max(160, int(total_height * 0.34))
+            target = min(restore, max(120, total_height - 180))
+        else:
+            self.image_list_restore_sash = current
+            target = 52
+        self._set_sash_pos(self.visual_pane, 0, target)
+        self._sync_pane_toggle_labels(target)
+        self._on_layout_changed()
+
+    def _sync_pane_toggle_labels(self, sash_position=None):
+        if not hasattr(self, "visual_pane"):
+            return
+        if sash_position is None:
+            sash_position = self._get_sash_pos(self.visual_pane, 0)
+        total_height = max(1, self.visual_pane.winfo_height())
+        if hasattr(self, "toggle_image_list_button"):
+            list_label = "Mostrar lista" if sash_position <= 90 else "Recolher lista"
+            self.toggle_image_list_button.configure(text=list_label)
+        if hasattr(self, "toggle_preview_panel_button"):
+            preview_label = (
+                "Mostrar prévias"
+                if sash_position >= total_height - 100
+                else "Recolher prévias"
+            )
+            self.toggle_preview_panel_button.configure(text=preview_label)
 
     def _on_backend_ui_changed(self, *_):
         self._update_backend_specific_controls()
         if self.suspend_trace or self.backend_guard_active:
             return
-        self.root.after(80, self._ensure_selected_backend_ready)
+        self._set_backend_selection_pending(True)
+
+    def _set_backend_selection_pending(self, pending):
+        self.backend_selection_pending = bool(pending)
+        if hasattr(self, "backend_apply_button"):
+            if self.backend_selection_pending:
+                self.backend_apply_button.state(["!disabled"])
+            else:
+                self.backend_apply_button.state(["disabled"])
+        if hasattr(self, "backend_selection_status_var"):
+            if self.backend_selection_pending:
+                cfg = self._collect_vars_as_cfg(include_pending_backend=True)
+                signature = self._backend_signature(cfg)
+                self.backend_selection_status_var.set(
+                    f"Seleção pendente: {signature}. Nada será executado até aplicar."
+                )
+            else:
+                self.backend_selection_status_var.set(
+                    "Alterar as opções acima não executa nem baixa modelos."
+                )
 
     def _update_backend_specific_controls(self):
         backend = str(self.vars.get("backend_remocao_fundo").get() if self.vars.get("backend_remocao_fundo") else "rembg")
@@ -1466,24 +2075,11 @@ class PDFSheetUI:
             return script.garantir_inspyrenet_importado()
         return False
 
-    def _set_selected_backend_default(self):
-        self.backend_guard_active = True
-        self.suspend_trace = True
-        try:
-            if "backend_remocao_fundo" in self.vars:
-                self.vars["backend_remocao_fundo"].set("rembg")
-            if "modelo_remocao_fundo" in self.vars:
-                self.vars["modelo_remocao_fundo"].set("birefnet-general-lite")
-        finally:
-            self.suspend_trace = False
-            self.backend_guard_active = False
-            self._update_backend_specific_controls()
-        self._on_config_change()
-
-    def _ensure_selected_backend_ready(self):
+    def _ensure_selected_backend_ready(self, cfg=None):
         if self.backend_guard_active:
-            return
-        cfg = self._collect_vars_as_cfg()
+            return False
+        if cfg is None:
+            cfg = self._collect_vars_as_cfg(include_pending_backend=True)
         backend = script.obter_backend_remocao_fundo(cfg)
         assinatura = self._backend_signature(cfg)
 
@@ -1492,27 +2088,23 @@ class PDFSheetUI:
                 "Backend não instalado",
                 f"O backend '{backend}' ainda não está instalado.\n\nInstalar agora em:\n{script.BACKEND_DEPS.get(backend)}?",
             ):
-                self._set_selected_backend_default()
-                return
+                return False
             if not self._instalar_backend_windows(backend):
-                self._set_selected_backend_default()
-                return
-            self._set_selected_backend_default()
+                return False
             messagebox.showinfo(
                 "Reinicie o app",
-                "O backend foi instalado. Reinicie o app antes de selecioná-lo novamente.",
+                "O backend foi instalado. Reinicie o app e clique em aplicar novamente.",
             )
-            return
+            return False
 
         if self.model_markers.get(assinatura):
-            return
+            return True
 
         if not messagebox.askyesno(
             "Modelo não preparado",
             f"O backend/modelo selecionado ainda não foi preparado:\n{assinatura}\n\nBaixar/preparar agora?",
         ):
-            self._set_selected_backend_default()
-            return
+            return False
 
         self.status_var.set(f"Preparando {assinatura}...")
         try:
@@ -1525,10 +2117,23 @@ class PDFSheetUI:
             self.model_markers[assinatura] = True
             self._save_model_markers()
             self.status_var.set(f"{assinatura} pronto para uso.")
+            return True
+
+        messagebox.showwarning("Aviso", f"Não foi possível preparar {assinatura}.")
+        return False
+
+    def _apply_backend_selection(self):
+        cfg = self._collect_vars_as_cfg(include_pending_backend=True)
+        if not self._ensure_selected_backend_ready(cfg):
             return
 
-        messagebox.showwarning("Aviso", f"Não foi possível preparar {assinatura}. Voltando ao padrão.")
-        self._set_selected_backend_default()
+        self.committed_backend_selection = {
+            key: cfg.get(key, script.CONFIG_PADRAO.get(key))
+            for key in BACKEND_SELECTION_KEYS
+        }
+        self._set_backend_selection_pending(False)
+        self._on_config_change(force_backend=True)
+        self.status_var.set(f"{self._backend_signature(cfg)} aplicado.")
 
     def _show_apply_all_hint(self, key):
         if self.apply_all_hint_after_id is not None:
@@ -1590,17 +2195,21 @@ class PDFSheetUI:
             if zoom is not None:
                 self.page_zoom = max(0.3, min(2.5, float(zoom)))
                 self.page_zoom_var.set(f"{int(round(self.page_zoom * 100))}%")
+            preview_zoom = d.get("preview_zoom")
+            if preview_zoom is not None:
+                self.preview_zoom = max(0.25, min(1.0, float(preview_zoom)))
+                self.preview_zoom_var.set(f"{int(round(self.preview_zoom * 100))}%")
         except Exception:
             pass
 
-    def _apply_layout_positions(self, main_sash, visual_sash0, visual_sash1):
+    def _apply_layout_positions(self, main_sash, visual_sash0, _visual_sash1=None):
         try:
             if main_sash is not None:
                 self._set_sash_pos(self.main_pane, 0, int(main_sash))
             if visual_sash0 is not None:
-                self._set_sash_pos(self.visual_pane, 0, int(visual_sash0))
-            if visual_sash1 is not None:
-                self._set_sash_pos(self.visual_pane, 1, int(visual_sash1))
+                visual_pos = int(visual_sash0)
+                self._set_sash_pos(self.visual_pane, 0, visual_pos)
+                self._sync_pane_toggle_labels(visual_pos)
         except Exception:
             pass
 
@@ -1609,8 +2218,8 @@ class PDFSheetUI:
             data = {
                 "main_sash": self._get_sash_pos(self.main_pane, 0),
                 "visual_sash0": self._get_sash_pos(self.visual_pane, 0),
-                "visual_sash1": self._get_sash_pos(self.visual_pane, 1),
                 "page_zoom": self.page_zoom,
+                "preview_zoom": self.preview_zoom,
             }
             with open(self.layout_file, "w", encoding="utf-8") as f:
                 json.dump(data, f)
@@ -2593,13 +3202,15 @@ class PDFSheetUI:
         cfg["tamanho_numero_relativo"] = float(cfg["tamanho_numero_relativo"])
         return cfg
 
-    def _collect_vars_as_cfg(self):
+    def _collect_vars_as_cfg(self, include_pending_backend=False):
         cfg = self._get_config_ui()
         for key, var in self.vars.items():
             cfg[key] = var.get()
         if "remover_fundo_local" in self.vars:
             cfg["remover_fundo_modo"] = "todos" if bool(self.vars["remover_fundo_local"].get()) else "desligado"
             cfg.pop("remover_fundo_local", None)
+        if not include_pending_backend:
+            cfg.update(self.committed_backend_selection)
         return cfg
 
     def _collect_image_override_cfg(self):
@@ -2624,10 +3235,26 @@ class PDFSheetUI:
                     pass
         finally:
             self.suspend_trace = False
+            self.committed_backend_selection = {
+                key: cfg.get(key, script.CONFIG_PADRAO.get(key))
+                for key in BACKEND_SELECTION_KEYS
+            }
+            self._set_backend_selection_pending(False)
             self._update_backend_specific_controls()
 
     def _bind_tooltip(self, widget, key, apply_all=False):
         text = self.param_help.get(key, "")
+        override_key = "remover_fundo_modo" if key == "remover_fundo_local" else key
+        if override_key in IMAGE_OVERRIDE_KEYS:
+            if not getattr(widget, "_app_reset_bound", False):
+                widget.bind(
+                    "<Button-3>",
+                    lambda _event, k=override_key: self._reset_image_param_to_global(k),
+                    add="+",
+                )
+                setattr(widget, "_app_reset_bound", True)
+            reset_help = "Clique com o botão direito para voltar este parâmetro ao padrão global."
+            text = f"{text}\n\n{reset_help}" if text else reset_help
         try:
             is_apply_all_label = key in self.apply_all_label_keys and str(widget.cget("cursor")) == "hand2"
         except Exception:
@@ -2745,6 +3372,8 @@ class PDFSheetUI:
         if not pasta.exists():
             self.imagens = []
             self.listbox.delete(0, tk.END)
+            if hasattr(self, "image_count_var"):
+                self.image_count_var.set("0 imagens")
             self.info_img_var.set(f"Pasta não encontrada: {pasta}")
             self.imagem_atual = None
             self._sync_single_rename_field()
@@ -2817,8 +3446,11 @@ class PDFSheetUI:
         else:
             self._set_vars_from_cfg(self.global_cfg)
 
-    def _on_config_change(self, *_):
+    def _on_config_change(self, *_, changed_key=None, force_backend=False):
         if self.suspend_trace:
+            return
+        if changed_key in BACKEND_SELECTION_KEYS and not force_backend:
+            self._set_backend_selection_pending(True)
             return
 
         cfg_vars = self._collect_vars_as_cfg()
@@ -3051,7 +3683,7 @@ class PDFSheetUI:
     def _update_page_preview_ui(self):
         if not self.paginas_cache:
             self.page_info_var.set("Página 0/0")
-            self.lbl_page.configure(image="")
+            self._clear_page_preview_canvas()
             return
         total = len(self.paginas_cache)
         idx = self.indice_pagina_preview + 1
@@ -3076,8 +3708,62 @@ class PDFSheetUI:
             "disp_h": img.height,
         }
         self.preview_pagina_ref = ImageTk.PhotoImage(img)
-        self.lbl_page.configure(image=self.preview_pagina_ref)
+        self._draw_page_preview_canvas()
         self.status_var.set("Prévia de página atualizada.")
+
+    def _draw_page_preview_canvas(self, preserve_scroll=False):
+        if self.preview_pagina_ref is None or not self.page_preview_meta:
+            self._clear_page_preview_canvas()
+            return
+
+        old_x = self.page_canvas.xview()[0] if preserve_scroll else 0.0
+        old_y = self.page_canvas.yview()[0] if preserve_scroll else 0.0
+        viewport_w = max(1, self.page_canvas.winfo_width())
+        viewport_h = max(1, self.page_canvas.winfo_height())
+        image_w = int(self.page_preview_meta["disp_w"])
+        image_h = int(self.page_preview_meta["disp_h"])
+        content_w = max(viewport_w, image_w)
+        content_h = max(viewport_h, image_h)
+        offset_x = max(0, (content_w - image_w) // 2)
+        offset_y = max(0, (content_h - image_h) // 2)
+
+        self.page_canvas.delete("page_preview")
+        self.page_canvas.create_image(
+            offset_x,
+            offset_y,
+            image=self.preview_pagina_ref,
+            anchor="nw",
+            tags="page_preview",
+        )
+        self.page_canvas.configure(scrollregion=(0, 0, content_w, content_h))
+        self.page_preview_meta["offset_x"] = offset_x
+        self.page_preview_meta["offset_y"] = offset_y
+        self.page_canvas.xview_moveto(old_x)
+        self.page_canvas.yview_moveto(old_y)
+
+    def _clear_page_preview_canvas(self):
+        if not hasattr(self, "page_canvas"):
+            return
+        self.page_canvas.delete("all")
+        self.page_canvas.configure(scrollregion=(0, 0, 0, 0))
+        self.page_preview_meta = None
+        self.preview_pagina_ref = None
+
+    def _on_page_canvas_resize(self, _event=None):
+        if self.preview_pagina_ref is not None and self.page_preview_meta:
+            self._draw_page_preview_canvas(preserve_scroll=True)
+
+    def _scroll_page_preview(self, event):
+        units = -int(event.delta / 120) * 3 if event.delta else 0
+        if units:
+            self.page_canvas.yview_scroll(units, "units")
+        return "break"
+
+    def _scroll_page_preview_horizontal(self, event):
+        units = -int(event.delta / 120) * 3 if event.delta else 0
+        if units:
+            self.page_canvas.xview_scroll(units, "units")
+        return "break"
 
     def _ajustar_zoom_pagina(self, delta):
         self.page_zoom = max(0.3, min(2.5, self.page_zoom + float(delta)))
@@ -3293,8 +3979,12 @@ class PDFSheetUI:
         if meta["disp_w"] <= 0 or meta["disp_h"] <= 0:
             return
 
-        px = int(event.x * (meta["orig_w"] / meta["disp_w"]))
-        py = int(event.y * (meta["orig_h"] / meta["disp_h"]))
+        image_x = self.page_canvas.canvasx(event.x) - int(meta.get("offset_x", 0))
+        image_y = self.page_canvas.canvasy(event.y) - int(meta.get("offset_y", 0))
+        if not (0 <= image_x <= meta["disp_w"] and 0 <= image_y <= meta["disp_h"]):
+            return
+        px = int(image_x * (meta["orig_w"] / meta["disp_w"]))
+        py = int(image_y * (meta["orig_h"] / meta["disp_h"]))
         for item in self.page_layout_cache[self.indice_pagina_preview]:
             x = item["x"]
             y = item["y"]
