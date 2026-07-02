@@ -29,6 +29,8 @@ IMAGE_OVERRIDE_KEYS = (
     "limiar_alpha",
     "tolerancia_fundo",
     "margem_interna_quadrado",
+    "deslocamento_x",
+    "deslocamento_y",
     "borda_preta_espessura",
     "estilo_borda",
     "raio_borda",
@@ -336,6 +338,18 @@ class PDFSheetUI:
         style.configure("TEntry", padding=6, fieldbackground=self.colors["white"])
         style.configure("TCombobox", padding=5, fieldbackground=self.colors["white"])
         style.configure("TSpinbox", padding=5, fieldbackground=self.colors["white"])
+        style.configure(
+            "Compact.TSpinbox",
+            padding=(3, 1),
+            fieldbackground=self.colors["white"],
+            font=("Segoe UI", 8),
+        )
+        style.configure(
+            "Compact.TLabel",
+            background=self.colors["surface"],
+            foreground=self.colors["muted"],
+            font=("Segoe UI Semibold", 8),
+        )
         style.configure(
             "TNotebook",
             background=self.colors["canvas"],
@@ -703,6 +717,8 @@ class PDFSheetUI:
             "estilo_borda": "Estilo da borda de recorte da imagem: sólida ou tracejada.",
             "raio_borda": "Arredondamento dos cantos da borda de recorte (em pixels).",
             "margem_interna_quadrado": "Margem interna da imagem dentro do quadrado (0.00 a 0.25).",
+            "deslocamento_x": "Move a imagem horizontalmente dentro do quadrado. Valores negativos movem para a esquerda; positivos, para a direita.",
+            "deslocamento_y": "Move a imagem verticalmente dentro do quadrado. Valores negativos movem para cima; positivos, para baixo.",
             "tamanho_numero_relativo": "Tamanho do número relativo ao tamanho da célula.",
             "padding_numero": "Distância do número em relação à borda interna da célula.",
             "numero_glow_blur": "Desfoque do brilho branco atrás do número (halo).",
@@ -737,6 +753,8 @@ class PDFSheetUI:
             "estilo_borda",
             "raio_borda",
             "margem_interna_quadrado",
+            "deslocamento_x",
+            "deslocamento_y",
             "tamanho_numero_relativo",
             "padding_numero",
             "numero_glow_blur",
@@ -758,6 +776,8 @@ class PDFSheetUI:
             "borda_preta_espessura": ("borda_preta_espessura", "cor_borda"),
             "estilo_borda": ("estilo_borda", "raio_borda"),
             "tamanho_numero_relativo": ("tamanho_numero_relativo", "cor_numero"),
+            "deslocamento_x": ("deslocamento_x", "deslocamento_y"),
+            "deslocamento_y": ("deslocamento_x", "deslocamento_y"),
         }
 
         ttk.Label(
@@ -1011,6 +1031,45 @@ class PDFSheetUI:
         self._bind_tooltip(lbl_raio, "raio_borda")
         row += 1
         add_slider_float("Margem interna", "margem_interna_quadrado", row, 0.0, 0.25, apply_all=True)
+        row += 1
+
+        lbl_offset = make_apply_all_label(
+            control_parent,
+            "Deslocamento",
+            "deslocamento_x",
+            row,
+        )
+        offset_frame = ttk.Frame(control_parent)
+        offset_frame.grid(row=row, column=1, sticky="w", pady=1)
+        self.vars["deslocamento_x"] = tk.IntVar(
+            value=int(self.config.get("deslocamento_x", 0))
+        )
+        self.vars["deslocamento_y"] = tk.IntVar(
+            value=int(self.config.get("deslocamento_y", 0))
+        )
+        ttk.Label(offset_frame, text="X", style="Compact.TLabel").pack(side="left")
+        self.offset_x_spin = ttk.Spinbox(
+            offset_frame,
+            from_=-25,
+            to=25,
+            textvariable=self.vars["deslocamento_x"],
+            width=4,
+            style="Compact.TSpinbox",
+        )
+        self.offset_x_spin.pack(side="left", padx=(2, 6))
+        ttk.Label(offset_frame, text="Y", style="Compact.TLabel").pack(side="left")
+        self.offset_y_spin = ttk.Spinbox(
+            offset_frame,
+            from_=-25,
+            to=25,
+            textvariable=self.vars["deslocamento_y"],
+            width=4,
+            style="Compact.TSpinbox",
+        )
+        self.offset_y_spin.pack(side="left", padx=(2, 0))
+        bind_apply_all_widget(self.offset_x_spin, "deslocamento_x")
+        bind_apply_all_widget(self.offset_y_spin, "deslocamento_y")
+        self._bind_tooltip(lbl_offset, "deslocamento_x", apply_all=True)
         row += 1
 
         lbl_tnr = make_apply_all_label(control_parent, "Tamanho número (%)", "tamanho_numero_relativo", row)
@@ -1279,7 +1338,7 @@ class PDFSheetUI:
             tools.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
             sort_tools.pack(anchor="w")
             action_tools.pack(anchor="w", pady=(5, 0))
-            position_tools.pack(anchor="w", pady=(5, 0))
+            position_tools.pack(fill="x", pady=(5, 0))
         else:
             tools.grid(row=0, column=1, rowspan=2, sticky="e")
             sort_tools.pack(side="left")
@@ -1316,15 +1375,37 @@ class PDFSheetUI:
             if self.workspace_layout_mode == "split"
             else "Número:"
         )
-        ttk.Label(position_tools, text=position_label).pack(side="left", padx=(0, 3))
+        self.position_number_label = ttk.Label(
+            position_tools,
+            text=position_label,
+        )
+        position_buttons = ttk.Frame(position_tools, style="Surface.TFrame")
+        self.position_number_buttons = []
+        if self.workspace_layout_mode == "split":
+            position_tools.columnconfigure(0, weight=1)
+            self.position_number_label.grid(row=0, column=0, sticky="w", padx=(0, 3))
+            position_buttons.grid(row=0, column=1, sticky="e")
+
+            def update_position_toolbar(event):
+                if event.width < 250:
+                    self.position_number_label.grid_remove()
+                else:
+                    self.position_number_label.grid()
+
+            position_tools.bind("<Configure>", update_position_toolbar)
+        else:
+            self.position_number_label.pack(side="left", padx=(0, 3))
+            position_buttons.pack(side="left")
+
         for label, code in (("SE", "SE"), ("SD", "SD"), ("IE", "IE"), ("ID", "ID")):
             btn = ttk.Button(
-                position_tools,
+                position_buttons,
                 text=label,
                 width=3,
                 command=lambda c=code: self._apply_position_code_to_selected(c),
             )
             btn.pack(side="left", padx=1)
+            self.position_number_buttons.append(btn)
             self._bind_static_tooltip(btn, {
                 "SE": "Superior esquerdo",
                 "SD": "Superior direito",
@@ -1699,11 +1780,6 @@ class PDFSheetUI:
         ttk.Label(ctrls, textvariable=self.page_zoom_var, width=5).pack(side="left")
         ttk.Button(ctrls, text="+", width=3, command=lambda: self._ajustar_zoom_pagina(0.1)).pack(side="left", padx=2)
         ttk.Button(ctrls, text="Ajustar", command=self._resetar_zoom_pagina).pack(side="left", padx=(2, 0))
-        ttk.Label(
-            ctrls,
-            text="Roda: vertical  |  Shift + roda: horizontal",
-            style="Muted.TLabel",
-        ).pack(side="right")
 
         page_proof = ttk.LabelFrame(page_frame, text="Prova de impressão", padding=8)
         page_proof.grid(row=1, column=0, sticky="nsew")
@@ -2268,11 +2344,17 @@ class PDFSheetUI:
 
         image_key = self._image_key(self.imagem_atual)
         override = dict(self.image_overrides.get(image_key, {}))
-        if key not in override:
+        reset_keys = (
+            ("deslocamento_x", "deslocamento_y")
+            if key in ("deslocamento_x", "deslocamento_y")
+            else (key,)
+        )
+        if not any(reset_key in override for reset_key in reset_keys):
             self.status_var.set(f"'{key}' já está usando o padrão global.")
             return "break"
 
-        override.pop(key, None)
+        for reset_key in reset_keys:
+            override.pop(reset_key, None)
         if override:
             self.image_overrides[image_key] = override
         else:
@@ -2824,6 +2906,8 @@ class PDFSheetUI:
             ("estilo_borda", "Estilo borda"),
             ("raio_borda", "Raio borda"),
             ("margem_interna_quadrado", "Margem interna"),
+            ("deslocamento_x", "Deslocamento X (%)"),
+            ("deslocamento_y", "Deslocamento Y (%)"),
             ("tamanho_numero_relativo", "Tamanho número"),
             ("padding_numero", "Padding número"),
             ("caixa_numero_padding_x", "Padding caixa X"),
@@ -3599,6 +3683,8 @@ class PDFSheetUI:
         cfg.update(self.global_cfg)
         cfg["figuras_por_pagina"] = int(cfg["figuras_por_pagina"])
         cfg["margem_interna_quadrado"] = float(cfg["margem_interna_quadrado"])
+        cfg["deslocamento_x"] = int(cfg.get("deslocamento_x", 0))
+        cfg["deslocamento_y"] = int(cfg.get("deslocamento_y", 0))
         cfg["tamanho_numero_relativo"] = float(cfg["tamanho_numero_relativo"])
         return cfg
 
@@ -4224,6 +4310,11 @@ class PDFSheetUI:
 
     def _effective_config_for_image(self, imagem: Path, cfg: dict):
         out = dict(cfg)
+        for key in IMAGE_OVERRIDE_KEYS:
+            if key in self.global_cfg:
+                out[key] = self.global_cfg[key]
+            elif key in script.CONFIG_PADRAO:
+                out[key] = script.CONFIG_PADRAO[key]
         ov = self.image_overrides.get(self._image_key(imagem))
         if ov:
             out.update(ov)
@@ -4303,6 +4394,8 @@ class PDFSheetUI:
             str(cfg_img.get("estilo_borda", "solida")),
             int(cfg_img.get("raio_borda", 0)),
             float(cfg_img.get("margem_interna_quadrado", 0.06)),
+            int(cfg_img.get("deslocamento_x", 0)),
+            int(cfg_img.get("deslocamento_y", 0)),
             float(cfg_img.get("tamanho_numero_relativo", 0.085)),
             int(cfg_img.get("padding_numero", 10)),
             int(cfg_img.get("caixa_numero_padding_x", 10)),
@@ -4438,6 +4531,8 @@ class PDFSheetUI:
             int(cfg.get("limiar_alpha", 10)),
             int(cfg.get("tolerancia_fundo", 18)),
             float(cfg.get("margem_interna_quadrado", 0.06)),
+            int(cfg.get("deslocamento_x", 0)),
+            int(cfg.get("deslocamento_y", 0)),
             int(cfg.get("borda_preta_espessura", 8)),
             str(cfg.get("estilo_borda", "solida")),
             int(cfg.get("raio_borda", 0)),
@@ -4519,6 +4614,8 @@ class PDFSheetUI:
             int(cfg.get("espaco_vertical", 30)),
             int(cfg.get("borda_preta_espessura", 8)),
             float(cfg.get("margem_interna_quadrado", 0.06)),
+            int(cfg.get("deslocamento_x", 0)),
+            int(cfg.get("deslocamento_y", 0)),
             str(cfg.get("posicao_padrao_numero", "superior_esquerdo")),
             float(cfg.get("tamanho_numero_relativo", 0.085)),
             int(cfg.get("padding_numero", 10)),
@@ -4556,6 +4653,8 @@ class PDFSheetUI:
             int(cfg.get("tolerancia_fundo", 18)),
             int(cfg.get("limite_lado_processamento", 2000)),
             float(cfg.get("margem_interna_quadrado", 0.06)),
+            int(cfg.get("deslocamento_x", 0)),
+            int(cfg.get("deslocamento_y", 0)),
             int(cfg.get("borda_preta_espessura", 8)),
             str(cfg.get("estilo_borda", "solida")),
             int(cfg.get("raio_borda", 0)),
@@ -4633,6 +4732,8 @@ class PDFSheetUI:
             "numero": str(numero),
             "posicao": str(posicao),
             "margem_interna_quadrado": float(cfg.get("margem_interna_quadrado", 0.06)),
+            "deslocamento_x": int(cfg.get("deslocamento_x", 0)),
+            "deslocamento_y": int(cfg.get("deslocamento_y", 0)),
             "borda_preta_espessura": int(cfg.get("borda_preta_espessura", 8)),
             "estilo_borda": str(cfg.get("estilo_borda", "solida")),
             "raio_borda": int(cfg.get("raio_borda", 0)),

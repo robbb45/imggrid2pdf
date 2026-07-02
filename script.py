@@ -144,6 +144,8 @@ CONFIG_PADRAO = {
     "cor_borda": "#000000",
     "cor_numero": "#000000",
     "margem_interna_quadrado": 0.06,
+    "deslocamento_x": 0,
+    "deslocamento_y": 0,
 
     "posicao_padrao_numero": "superior_esquerdo",
     "tamanho_numero_relativo": 0.085,
@@ -857,8 +859,14 @@ def transformar_em_quadrado_com_margem(img_rgba, tamanho_saida, config):
         (255, 255, 255, 255)
     )
 
+    deslocamento_x = int(config.get("deslocamento_x", 0))
+    deslocamento_y = int(config.get("deslocamento_y", 0))
     x = (tamanho_saida - img_copia.width) // 2
     y = (tamanho_saida - img_copia.height) // 2
+    x += int(round(tamanho_saida * deslocamento_x / 100.0))
+    y += int(round(tamanho_saida * deslocamento_y / 100.0))
+    x = max(0, min(tamanho_saida - img_copia.width, x))
+    y = max(0, min(tamanho_saida - img_copia.height, y))
 
     quadrado.paste(img_copia, (x, y), img_copia)
 
