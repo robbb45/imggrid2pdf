@@ -121,6 +121,7 @@ class PDFSheetUI:
         self.page_auto_after_id = None
         self.preview_resize_after_id = None
         self.global_sidebar_after_id = None
+        self.layout_after_id = None
         self.preview_backend_warning = None
         self.apply_all_hint_after_id = None
         self.preview_cache = {}
@@ -159,6 +160,12 @@ class PDFSheetUI:
         self.raw_cache_dir.mkdir(parents=True, exist_ok=True)
         self.overrides_file = self.script_dir / "image_overrides.json"
         self.layout_file = self.script_dir / "ui_layout.json"
+        self.layout_state = self._read_layout_state()
+        self.workspace_layout_mode = str(
+            self.layout_state.get("workspace_layout", "split")
+        )
+        if self.workspace_layout_mode not in ("tabs", "split"):
+            self.workspace_layout_mode = "split"
         self.model_markers_file = script.MODELS_ROOT / "prepared_backends.json"
         self.model_markers = self._load_model_markers()
 
@@ -189,6 +196,16 @@ class PDFSheetUI:
     @staticmethod
     def _image_key(imagem: Path):
         return script.normalizar_chave_imagem(imagem)
+
+    def _read_layout_state(self):
+        if not self.layout_file.exists():
+            return {}
+        try:
+            with open(self.layout_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
 
     def _configure_theme(self):
         self.colors = {
@@ -362,6 +379,24 @@ class PDFSheetUI:
         menu_ferr.add_command(label="Limpar Cache", command=self._clear_all_cache)
         menubar.add_cascade(label="Ferramentas", menu=menu_ferr)
 
+        menu_exibir = tk.Menu(menubar, tearoff=0)
+        self.layout_mode_var = tk.StringVar(value=self.workspace_layout_mode)
+        menu_layout = tk.Menu(menu_exibir, tearoff=0)
+        menu_layout.add_radiobutton(
+            label="Abas",
+            value="tabs",
+            variable=self.layout_mode_var,
+            command=self._switch_workspace_layout,
+        )
+        menu_layout.add_radiobutton(
+            label="Dividido: lista + prévias",
+            value="split",
+            variable=self.layout_mode_var,
+            command=self._switch_workspace_layout,
+        )
+        menu_exibir.add_cascade(label="Layout", menu=menu_layout)
+        menubar.add_cascade(label="Exibir", menu=menu_exibir)
+
         menu_ajuda = tk.Menu(menubar, tearoff=0)
         menu_ajuda.add_command(
             label="Sobre Cache",
@@ -374,6 +409,82 @@ class PDFSheetUI:
         )
         menubar.add_cascade(label="Ajuda", menu=menu_ajuda)
         self.root.config(menu=menubar)
+
+    def _switch_workspace_layout(self):
+        requested = str(self.layout_mode_var.get())
+        if requested not in ("tabs", "split") or requested == self.workspace_layout_mode:
+            return
+        if self.preview_lock.locked() or self.render_lock.locked():
+            messagebox.showinfo(
+                "Aguarde",
+                "Aguarde a renderização atual terminar antes de alterar o layout.",
+            )
+            self.layout_mode_var.set(self.workspace_layout_mode)
+            return
+        if self.backend_selection_pending:
+            messagebox.showinfo(
+                "Seleção pendente",
+                "Aplique ou descarte a seleção de backend/modelo antes de alterar o layout.",
+            )
+            self.layout_mode_var.set(self.workspace_layout_mode)
+            return
+
+        selected_paths = self._selected_images()
+        if not selected_paths and self.imagem_atual is not None:
+            selected_paths = [self.imagem_atual]
+        images = list(self.imagens)
+        sort_mode = self.sort_mode_var.get()
+        rename_visible = self.rename_panel_visible
+
+        self._on_layout_changed()
+        self.workspace_layout_mode = requested
+        self.layout_state["workspace_layout"] = requested
+        self._cancel_ui_callbacks()
+
+        self.root.unbind("<ButtonRelease-1>")
+        self.root.unbind("<F2>")
+        self.root.unbind_all("<MouseWheel>")
+        self.root.unbind_all("<Button-4>")
+        self.root.unbind_all("<Button-5>")
+        for child in self.root.winfo_children():
+            child.destroy()
+
+        self.tooltips = []
+        self.rename_panel_visible = False
+        self._build_ui()
+        self._setup_menu()
+        self._apply_window_bg()
+
+        self.imagens = images
+        self.sort_mode_var.set(sort_mode)
+        self._refresh_image_listbox(selected_paths)
+        self._on_select_image()
+        if rename_visible:
+            self._toggle_rename_panel()
+
+        self.root.update_idletasks()
+        if self.paginas_cache:
+            self._update_page_preview_ui()
+        self._on_layout_changed()
+        mode_name = "dividido" if requested == "split" else "com abas"
+        self.status_var.set(f"Layout {mode_name} ativado.")
+
+    def _cancel_ui_callbacks(self):
+        for attr in (
+            "preview_after_id",
+            "page_auto_after_id",
+            "preview_resize_after_id",
+            "global_sidebar_after_id",
+            "layout_after_id",
+            "apply_all_hint_after_id",
+        ):
+            callback_id = getattr(self, attr, None)
+            if callback_id is not None:
+                try:
+                    self.root.after_cancel(callback_id)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
 
     def _apply_window_bg(self):
         cor = str(self.global_cfg.get("cor_fundo_janela", "#f0f0f0"))
@@ -519,12 +630,36 @@ class PDFSheetUI:
         sidebar_canvas.bind("<Enter>", bind_sidebar_scroll)
         sidebar_canvas.bind("<Leave>", unbind_sidebar_scroll)
 
-        visual = ttk.Frame(self.main_pane, padding=(14, 12), style="Canvas.TFrame")
-        visual.columnconfigure(0, weight=1)
-        visual.rowconfigure(0, weight=1)
-
         self.main_pane.add(sidebar_outer, minsize=330, width=370)
-        self.main_pane.add(visual)
+        if self.workspace_layout_mode == "tabs":
+            visual = ttk.Frame(
+                self.main_pane,
+                padding=(14, 12),
+                style="Canvas.TFrame",
+            )
+            visual.columnconfigure(0, weight=1)
+            visual.rowconfigure(0, weight=1)
+            self.main_pane.add(visual)
+            split_list_host = None
+            split_workspace_host = None
+        else:
+            visual = None
+            split_list_host = ttk.Frame(
+                self.main_pane,
+                padding=(10, 12),
+                style="Canvas.TFrame",
+            )
+            split_list_host.columnconfigure(0, weight=1)
+            split_list_host.rowconfigure(0, weight=1)
+            split_workspace_host = ttk.Frame(
+                self.main_pane,
+                padding=(0, 12, 14, 12),
+                style="Canvas.TFrame",
+            )
+            split_workspace_host.columnconfigure(0, weight=1)
+            split_workspace_host.rowconfigure(0, weight=1)
+            self.main_pane.add(split_list_host, minsize=230, width=290)
+            self.main_pane.add(split_workspace_host, minsize=500)
 
         status_bar = ttk.Frame(self.root, style="Status.TFrame", padding=(16, 7))
         status_bar.grid(row=2, column=0, sticky="ew")
@@ -1079,19 +1214,47 @@ class PDFSheetUI:
             style="Accent.TButton",
         ).grid(row=1, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
 
-        self.visual_pane = tk.PanedWindow(
-            visual,
-            orient=tk.VERTICAL,
-            sashrelief=tk.FLAT,
-            sashwidth=6,
-            showhandle=False,
-            opaqueresize=True,
-            bg=self.colors["line"],
-            bd=0,
-        )
-        self.visual_pane.grid(row=0, column=0, sticky="nsew")
+        if self.workspace_layout_mode == "tabs":
+            self.visual_pane = tk.PanedWindow(
+                visual,
+                orient=tk.VERTICAL,
+                sashrelief=tk.FLAT,
+                sashwidth=6,
+                showhandle=False,
+                opaqueresize=True,
+                bg=self.colors["line"],
+                bd=0,
+            )
+            self.visual_pane.grid(row=0, column=0, sticky="nsew")
+            topo = ttk.Frame(
+                self.visual_pane,
+                style="Surface.TFrame",
+                padding=(14, 12),
+            )
+            self.split_workspace_pane = None
+        else:
+            self.visual_pane = None
+            self.workspace_tabs = None
+            self.toggle_image_list_button = None
+            self.toggle_preview_panel_button = None
+            topo = ttk.Frame(
+                split_list_host,
+                style="Surface.TFrame",
+                padding=(12, 12),
+            )
+            topo.grid(row=0, column=0, sticky="nsew")
+            self.split_workspace_pane = tk.PanedWindow(
+                split_workspace_host,
+                orient=tk.VERTICAL,
+                sashrelief=tk.FLAT,
+                sashwidth=6,
+                showhandle=False,
+                opaqueresize=True,
+                bg=self.colors["line"],
+                bd=0,
+            )
+            self.split_workspace_pane.grid(row=0, column=0, sticky="nsew")
 
-        topo = ttk.Frame(self.visual_pane, style="Surface.TFrame", padding=(14, 12))
         topo.columnconfigure(1, weight=1)
         topo.columnconfigure(0, weight=1)
         topo.columnconfigure(2, weight=1)
@@ -1109,11 +1272,24 @@ class PDFSheetUI:
         )
 
         tools = ttk.Frame(header, style="Surface.TFrame")
-        tools.grid(row=0, column=1, rowspan=2, sticky="e")
-        ttk.Label(tools, text="Ordenar por").pack(side="left", padx=(0, 4))
+        sort_tools = ttk.Frame(tools, style="Surface.TFrame")
+        action_tools = ttk.Frame(tools, style="Surface.TFrame")
+        position_tools = ttk.Frame(tools, style="Surface.TFrame")
+        if self.workspace_layout_mode == "split":
+            tools.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+            sort_tools.pack(anchor="w")
+            action_tools.pack(anchor="w", pady=(5, 0))
+            position_tools.pack(anchor="w", pady=(5, 0))
+        else:
+            tools.grid(row=0, column=1, rowspan=2, sticky="e")
+            sort_tools.pack(side="left")
+            action_tools.pack(side="left")
+            position_tools.pack(side="left")
+
+        ttk.Label(sort_tools, text="Ordenar por").pack(side="left", padx=(0, 4))
         self.sort_mode_var = tk.StringVar(value="Manual")
         sort_combo = ttk.Combobox(
-            tools,
+            sort_tools,
             textvariable=self.sort_mode_var,
             values=["Manual", "Nome A-Z", "Nome Z-A", "Número"],
             state="readonly",
@@ -1121,11 +1297,11 @@ class PDFSheetUI:
         )
         sort_combo.pack(side="left", padx=(0, 4))
         sort_combo.bind("<<ComboboxSelected>>", lambda _e: self._apply_image_sort())
-        ttk.Button(tools, text="Renomear", command=self._toggle_rename_panel).pack(
+        ttk.Button(action_tools, text="Renomear", command=self._toggle_rename_panel).pack(
             side="left", padx=(0, 4)
         )
         exclude_btn = ttk.Button(
-            tools,
+            action_tools,
             text="Remover",
             command=self._exclude_selected_images,
             style="Danger.TButton",
@@ -1135,9 +1311,19 @@ class PDFSheetUI:
             exclude_btn,
             "Move as imagens para a subpasta _excluded_images sem apagar os arquivos.",
         )
-        ttk.Label(tools, text="Número:").pack(side="left", padx=(6, 3))
+        position_label = (
+            "Posição do número:"
+            if self.workspace_layout_mode == "split"
+            else "Número:"
+        )
+        ttk.Label(position_tools, text=position_label).pack(side="left", padx=(0, 3))
         for label, code in (("SE", "SE"), ("SD", "SD"), ("IE", "IE"), ("ID", "ID")):
-            btn = ttk.Button(tools, text=label, width=3, command=lambda c=code: self._apply_position_code_to_selected(c))
+            btn = ttk.Button(
+                position_tools,
+                text=label,
+                width=3,
+                command=lambda c=code: self._apply_position_code_to_selected(c),
+            )
             btn.pack(side="left", padx=1)
             self._bind_static_tooltip(btn, {
                 "SE": "Superior esquerdo",
@@ -1146,32 +1332,167 @@ class PDFSheetUI:
                 "ID": "Inferior direito",
             }[code])
         self.rename_panel = ttk.Frame(topo)
-        self.rename_panel.columnconfigure(5, weight=1)
-        ttk.Label(self.rename_panel, text="Nome").grid(row=0, column=0, sticky="w", padx=(0, 4))
         self.rename_single_var = tk.StringVar(value="")
-        self.rename_single_entry = ttk.Entry(self.rename_panel, textvariable=self.rename_single_var, width=24)
-        self.rename_single_entry.grid(row=0, column=1, columnspan=4, sticky="ew", padx=(0, 6))
-        self.rename_single_entry.bind("<Return>", lambda _e: self._rename_selected_image_direct())
-        self.rename_single_entry.bind("<FocusIn>", lambda _e: setattr(self, "rename_inline_dirty", False))
-        self.rename_single_entry.bind("<KeyRelease>", self._on_single_rename_key)
         self.rename_extension_var = tk.StringVar(value="")
-        ttk.Label(self.rename_panel, textvariable=self.rename_extension_var, width=7).grid(row=0, column=5, sticky="w", padx=(0, 8))
-        ttk.Button(self.rename_panel, text="Aplicar nome", command=self._rename_selected_image_direct).grid(row=0, column=6, sticky="e", padx=2)
-
         self.rename_padding_var = tk.IntVar(value=2)
-        ttk.Spinbox(self.rename_panel, from_=1, to=6, textvariable=self.rename_padding_var, width=4).grid(row=1, column=1, sticky="w", padx=(0, 8))
-        ttk.Label(self.rename_panel, text="Dígitos").grid(row=1, column=0, sticky="w", padx=(0, 4))
-        ttk.Label(self.rename_panel, text="Início").grid(row=1, column=2, sticky="w", padx=(0, 4))
         self.rename_start_var = tk.IntVar(value=1)
-        ttk.Spinbox(self.rename_panel, from_=0, to=9999, textvariable=self.rename_start_var, width=6).grid(row=1, column=3, sticky="w", padx=(0, 8))
-        ttk.Label(self.rename_panel, text="Prefixo").grid(row=1, column=4, sticky="w", padx=(0, 4))
         self.rename_prefix_var = tk.StringVar(value="")
-        ttk.Entry(self.rename_panel, textvariable=self.rename_prefix_var, width=8).grid(row=1, column=5, sticky="ew", padx=(0, 8))
-        ttk.Label(self.rename_panel, text="Sufixo").grid(row=1, column=6, sticky="w", padx=(0, 4))
         self.rename_suffix_var = tk.StringVar(value="")
-        ttk.Entry(self.rename_panel, textvariable=self.rename_suffix_var, width=8).grid(row=1, column=7, sticky="ew", padx=(0, 8))
-        ttk.Button(self.rename_panel, text="Selecionadas", command=lambda: self._renumber_images(False)).grid(row=1, column=8, sticky="e", padx=2)
-        ttk.Button(self.rename_panel, text="Todas", command=lambda: self._renumber_images(True)).grid(row=1, column=9, sticky="e", padx=2)
+        if self.workspace_layout_mode == "split":
+            self.rename_panel.columnconfigure(0, weight=1)
+            ttk.Label(self.rename_panel, text="Nome da imagem").grid(
+                row=0,
+                column=0,
+                sticky="w",
+            )
+            name_row = ttk.Frame(self.rename_panel)
+            name_row.grid(row=1, column=0, sticky="ew", pady=(3, 4))
+            name_row.columnconfigure(0, weight=1)
+            self.rename_single_entry = ttk.Entry(
+                name_row,
+                textvariable=self.rename_single_var,
+            )
+            self.rename_single_entry.grid(row=0, column=0, sticky="ew")
+            ttk.Label(name_row, textvariable=self.rename_extension_var).grid(
+                row=0,
+                column=1,
+                padx=(5, 0),
+            )
+            ttk.Button(
+                self.rename_panel,
+                text="Aplicar nome",
+                command=self._rename_selected_image_direct,
+            ).grid(row=2, column=0, sticky="ew")
+
+            sequence_row = ttk.Frame(self.rename_panel)
+            sequence_row.grid(row=3, column=0, sticky="ew", pady=(10, 4))
+            ttk.Label(sequence_row, text="Dígitos").pack(side="left")
+            ttk.Spinbox(
+                sequence_row,
+                from_=1,
+                to=6,
+                textvariable=self.rename_padding_var,
+                width=4,
+            ).pack(side="left", padx=(4, 10))
+            ttk.Label(sequence_row, text="Início").pack(side="left")
+            ttk.Spinbox(
+                sequence_row,
+                from_=0,
+                to=9999,
+                textvariable=self.rename_start_var,
+                width=6,
+            ).pack(side="left", padx=(4, 0))
+
+            affix_row = ttk.Frame(self.rename_panel)
+            affix_row.grid(row=4, column=0, sticky="ew", pady=4)
+            affix_row.columnconfigure(1, weight=1)
+            affix_row.columnconfigure(3, weight=1)
+            ttk.Label(affix_row, text="Prefixo").grid(row=0, column=0, padx=(0, 4))
+            ttk.Entry(
+                affix_row,
+                textvariable=self.rename_prefix_var,
+                width=7,
+            ).grid(row=0, column=1, sticky="ew", padx=(0, 8))
+            ttk.Label(affix_row, text="Sufixo").grid(row=0, column=2, padx=(0, 4))
+            ttk.Entry(
+                affix_row,
+                textvariable=self.rename_suffix_var,
+                width=7,
+            ).grid(row=0, column=3, sticky="ew")
+
+            renumber_row = ttk.Frame(self.rename_panel)
+            renumber_row.grid(row=5, column=0, sticky="ew")
+            renumber_row.columnconfigure(0, weight=1)
+            renumber_row.columnconfigure(1, weight=1)
+            ttk.Button(
+                renumber_row,
+                text="Renumerar selecionadas",
+                command=lambda: self._renumber_images(False),
+            ).grid(row=0, column=0, sticky="ew", padx=(0, 2))
+            ttk.Button(
+                renumber_row,
+                text="Renumerar todas",
+                command=lambda: self._renumber_images(True),
+            ).grid(row=0, column=1, sticky="ew", padx=(2, 0))
+        else:
+            self.rename_panel.columnconfigure(5, weight=1)
+            ttk.Label(self.rename_panel, text="Nome").grid(
+                row=0, column=0, sticky="w", padx=(0, 4)
+            )
+            self.rename_single_entry = ttk.Entry(
+                self.rename_panel,
+                textvariable=self.rename_single_var,
+                width=24,
+            )
+            self.rename_single_entry.grid(
+                row=0, column=1, columnspan=4, sticky="ew", padx=(0, 6)
+            )
+            ttk.Label(
+                self.rename_panel,
+                textvariable=self.rename_extension_var,
+                width=7,
+            ).grid(row=0, column=5, sticky="w", padx=(0, 8))
+            ttk.Button(
+                self.rename_panel,
+                text="Aplicar nome",
+                command=self._rename_selected_image_direct,
+            ).grid(row=0, column=6, sticky="e", padx=2)
+            ttk.Spinbox(
+                self.rename_panel,
+                from_=1,
+                to=6,
+                textvariable=self.rename_padding_var,
+                width=4,
+            ).grid(row=1, column=1, sticky="w", padx=(0, 8))
+            ttk.Label(self.rename_panel, text="Dígitos").grid(
+                row=1, column=0, sticky="w", padx=(0, 4)
+            )
+            ttk.Label(self.rename_panel, text="Início").grid(
+                row=1, column=2, sticky="w", padx=(0, 4)
+            )
+            ttk.Spinbox(
+                self.rename_panel,
+                from_=0,
+                to=9999,
+                textvariable=self.rename_start_var,
+                width=6,
+            ).grid(row=1, column=3, sticky="w", padx=(0, 8))
+            ttk.Label(self.rename_panel, text="Prefixo").grid(
+                row=1, column=4, sticky="w", padx=(0, 4)
+            )
+            ttk.Entry(
+                self.rename_panel,
+                textvariable=self.rename_prefix_var,
+                width=8,
+            ).grid(row=1, column=5, sticky="ew", padx=(0, 8))
+            ttk.Label(self.rename_panel, text="Sufixo").grid(
+                row=1, column=6, sticky="w", padx=(0, 4)
+            )
+            ttk.Entry(
+                self.rename_panel,
+                textvariable=self.rename_suffix_var,
+                width=8,
+            ).grid(row=1, column=7, sticky="ew", padx=(0, 8))
+            ttk.Button(
+                self.rename_panel,
+                text="Selecionadas",
+                command=lambda: self._renumber_images(False),
+            ).grid(row=1, column=8, sticky="e", padx=2)
+            ttk.Button(
+                self.rename_panel,
+                text="Todas",
+                command=lambda: self._renumber_images(True),
+            ).grid(row=1, column=9, sticky="e", padx=2)
+
+        self.rename_single_entry.bind(
+            "<Return>",
+            lambda _event: self._rename_selected_image_direct(),
+        )
+        self.rename_single_entry.bind(
+            "<FocusIn>",
+            lambda _event: setattr(self, "rename_inline_dirty", False),
+        )
+        self.rename_single_entry.bind("<KeyRelease>", self._on_single_rename_key)
 
         list_shell = ttk.Frame(topo, style="Surface.TFrame")
         list_shell.grid(row=2, column=0, columnspan=3, sticky="nsew")
@@ -1204,48 +1525,91 @@ class PDFSheetUI:
         self.listbox.bind("<ButtonRelease-1>", self._on_listbox_drag_end)
         self.listbox.bind("<Delete>", self._exclude_selected_images)
         self.info_img_var = tk.StringVar(value="")
-        ttk.Label(topo, textvariable=self.info_img_var, style="Muted.TLabel").grid(
-            row=3, column=0, columnspan=3, sticky="w", pady=(7, 0)
+        info_label = ttk.Label(
+            topo,
+            textvariable=self.info_img_var,
+            style="Muted.TLabel",
+            justify="left",
+            wraplength=250 if self.workspace_layout_mode == "split" else 0,
+        )
+        info_label.grid(
+            row=3,
+            column=0,
+            columnspan=3,
+            sticky="ew",
+            pady=(7, 0),
         )
 
         b_ov = ttk.Frame(topo, style="Surface.TFrame")
         b_ov.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-        ttk.Label(b_ov, text="Ajustes:", style="Muted.TLabel").pack(side="left", padx=(0, 4))
-        ttk.Button(
-            b_ov,
-            text="Usar como padrão",
-            command=self._apply_current_image_to_global,
-        ).pack(side="left", padx=2)
-        ttk.Button(
-            b_ov,
-            text="Limpar desta imagem",
-            command=self._clear_image_override,
-        ).pack(side="left", padx=2)
-        ttk.Button(
-            b_ov,
-            text="Limpar todos",
-            command=self._reset_all_image_overrides,
-        ).pack(side="left", padx=2)
+        if self.workspace_layout_mode == "split":
+            b_ov.columnconfigure(0, weight=1)
+            ttk.Label(b_ov, text="Ajustes da imagem", style="Muted.TLabel").grid(
+                row=0,
+                column=0,
+                sticky="w",
+                pady=(0, 3),
+            )
+            ttk.Button(
+                b_ov,
+                text="Usar como padrão global",
+                command=self._apply_current_image_to_global,
+            ).grid(row=1, column=0, sticky="ew", pady=2)
+            ttk.Button(
+                b_ov,
+                text="Limpar desta imagem",
+                command=self._clear_image_override,
+            ).grid(row=2, column=0, sticky="ew", pady=2)
+            ttk.Button(
+                b_ov,
+                text="Limpar ajustes de todas",
+                command=self._reset_all_image_overrides,
+            ).grid(row=3, column=0, sticky="ew", pady=2)
+        else:
+            ttk.Label(b_ov, text="Ajustes:", style="Muted.TLabel").pack(
+                side="left",
+                padx=(0, 4),
+            )
+            ttk.Button(
+                b_ov,
+                text="Usar como padrão",
+                command=self._apply_current_image_to_global,
+            ).pack(side="left", padx=2)
+            ttk.Button(
+                b_ov,
+                text="Limpar desta imagem",
+                command=self._clear_image_override,
+            ).pack(side="left", padx=2)
+            ttk.Button(
+                b_ov,
+                text="Limpar todos",
+                command=self._reset_all_image_overrides,
+            ).pack(side="left", padx=2)
 
-        self.workspace_tabs = ttk.Notebook(self.visual_pane)
-        tab_controls = ttk.Frame(self.workspace_tabs, style="Surface.TFrame")
-        self.toggle_image_list_button = ttk.Button(
-            tab_controls,
-            text="Recolher lista",
-            command=self._toggle_image_list_panel,
-            style="ListPane.TButton",
-        )
-        self.toggle_image_list_button.pack(side="left", padx=2)
-        self.toggle_preview_panel_button = ttk.Button(
-            tab_controls,
-            text="Recolher prévias",
-            command=self._toggle_preview_panel,
-            style="PreviewPane.TButton",
-        )
-        self.toggle_preview_panel_button.pack(side="left", padx=2)
-        tab_controls.place(relx=1.0, x=-8, y=5, anchor="ne")
+        if self.workspace_layout_mode == "tabs":
+            self.workspace_tabs = ttk.Notebook(self.visual_pane)
+            tab_controls = ttk.Frame(self.workspace_tabs, style="Surface.TFrame")
+            self.toggle_image_list_button = ttk.Button(
+                tab_controls,
+                text="Recolher lista",
+                command=self._toggle_image_list_panel,
+                style="ListPane.TButton",
+            )
+            self.toggle_image_list_button.pack(side="left", padx=2)
+            self.toggle_preview_panel_button = ttk.Button(
+                tab_controls,
+                text="Recolher prévias",
+                command=self._toggle_preview_panel,
+                style="PreviewPane.TButton",
+            )
+            self.toggle_preview_panel_button.pack(side="left", padx=2)
+            tab_controls.place(relx=1.0, x=-8, y=5, anchor="ne")
+            preview_parent = self.workspace_tabs
+        else:
+            tab_controls = None
+            preview_parent = self.split_workspace_pane
 
-        prev_frame = ttk.Frame(self.workspace_tabs, padding=(12, 10))
+        prev_frame = ttk.Frame(preview_parent, padding=(12, 10))
         prev_frame.columnconfigure(0, weight=1)
         prev_frame.rowconfigure(1, weight=1)
         preview_tools = ttk.Frame(prev_frame)
@@ -1309,7 +1673,7 @@ class PDFSheetUI:
         pane_c.grid(row=0, column=1, sticky="nsew", padx=6)
         pane_f.grid(row=0, column=2, sticky="nsew", padx=(6, 0))
 
-        page_frame = ttk.Frame(self.workspace_tabs, padding=(12, 10))
+        page_frame = ttk.Frame(preview_parent, padding=(12, 10))
         page_frame.columnconfigure(0, weight=1)
         page_frame.rowconfigure(1, weight=1)
 
@@ -1377,11 +1741,15 @@ class PDFSheetUI:
         self.page_canvas.bind("<Button-4>", lambda _event: self.page_canvas.yview_scroll(-3, "units"))
         self.page_canvas.bind("<Button-5>", lambda _event: self.page_canvas.yview_scroll(3, "units"))
 
-        self.workspace_tabs.add(prev_frame, text="Editar imagem")
-        self.workspace_tabs.add(page_frame, text="Prévia da página")
-        tab_controls.lift()
-        self.visual_pane.add(topo, minsize=48)
-        self.visual_pane.add(self.workspace_tabs, minsize=48)
+        if self.workspace_layout_mode == "tabs":
+            self.workspace_tabs.add(prev_frame, text="Editar imagem")
+            self.workspace_tabs.add(page_frame, text="Prévia da página")
+            tab_controls.lift()
+            self.visual_pane.add(topo, minsize=48)
+            self.visual_pane.add(self.workspace_tabs, minsize=48)
+        else:
+            self.split_workspace_pane.add(prev_frame, minsize=180, height=330)
+            self.split_workspace_pane.add(page_frame, minsize=220)
 
         previews_grid.bind("<Configure>", self._on_preview_area_resize)
 
@@ -1952,6 +2320,8 @@ class PDFSheetUI:
         self._on_layout_changed()
 
     def _toggle_preview_panel(self):
+        if self.visual_pane is None:
+            return
         self.root.update_idletasks()
         total_height = max(1, self.visual_pane.winfo_height())
         current = self._get_sash_pos(self.visual_pane, 0)
@@ -1969,6 +2339,8 @@ class PDFSheetUI:
         self._on_layout_changed()
 
     def _toggle_image_list_panel(self):
+        if self.visual_pane is None:
+            return
         self.root.update_idletasks()
         total_height = max(1, self.visual_pane.winfo_height())
         current = self._get_sash_pos(self.visual_pane, 0)
@@ -1985,15 +2357,15 @@ class PDFSheetUI:
         self._on_layout_changed()
 
     def _sync_pane_toggle_labels(self, sash_position=None):
-        if not hasattr(self, "visual_pane"):
+        if getattr(self, "visual_pane", None) is None:
             return
         if sash_position is None:
             sash_position = self._get_sash_pos(self.visual_pane, 0)
         total_height = max(1, self.visual_pane.winfo_height())
-        if hasattr(self, "toggle_image_list_button"):
+        if getattr(self, "toggle_image_list_button", None) is not None:
             list_label = "Mostrar lista" if sash_position <= 90 else "Recolher lista"
             self.toggle_image_list_button.configure(text=list_label)
-        if hasattr(self, "toggle_preview_panel_button"):
+        if getattr(self, "toggle_preview_panel_button", None) is not None:
             preview_label = (
                 "Mostrar prévias"
                 if sash_position >= total_height - 100
@@ -2178,17 +2550,14 @@ class PDFSheetUI:
         self.status_var.set("Todas as imagens foram resetadas para os padrões globais.")
 
     def _load_layout_state(self):
-        if not self.layout_file.exists():
-            return
         try:
-            with open(self.layout_file, "r", encoding="utf-8") as f:
-                d = json.load(f)
-            self.root.after(
+            d = dict(self.layout_state)
+            if self.layout_after_id is not None:
+                self.root.after_cancel(self.layout_after_id)
+            self.layout_after_id = self.root.after(
                 100,
                 lambda: self._apply_layout_positions(
-                    d.get("main_sash"),
-                    d.get("visual_sash0"),
-                    d.get("visual_sash1"),
+                    d,
                 ),
             )
             zoom = d.get("page_zoom")
@@ -2202,25 +2571,56 @@ class PDFSheetUI:
         except Exception:
             pass
 
-    def _apply_layout_positions(self, main_sash, visual_sash0, _visual_sash1=None):
+    def _apply_layout_positions(self, layout):
+        self.layout_after_id = None
         try:
+            main_sash = layout.get("main_sash")
             if main_sash is not None:
                 self._set_sash_pos(self.main_pane, 0, int(main_sash))
-            if visual_sash0 is not None:
-                visual_pos = int(visual_sash0)
-                self._set_sash_pos(self.visual_pane, 0, visual_pos)
-                self._sync_pane_toggle_labels(visual_pos)
+            if self.workspace_layout_mode == "tabs":
+                visual_sash = layout.get("tabs_visual_sash", layout.get("visual_sash0"))
+                if visual_sash is not None:
+                    visual_pos = int(visual_sash)
+                    self._set_sash_pos(self.visual_pane, 0, visual_pos)
+                    self._sync_pane_toggle_labels(visual_pos)
+            else:
+                list_sash = layout.get("split_list_sash")
+                if list_sash is not None:
+                    self._set_sash_pos(self.main_pane, 1, int(list_sash))
+                preview_sash = layout.get("split_preview_sash")
+                if preview_sash is not None:
+                    self._set_sash_pos(
+                        self.split_workspace_pane,
+                        0,
+                        int(preview_sash),
+                    )
         except Exception:
             pass
 
     def _on_layout_changed(self, _event=None):
         try:
-            data = {
+            data = dict(self.layout_state)
+            data.update({
+                "workspace_layout": self.workspace_layout_mode,
                 "main_sash": self._get_sash_pos(self.main_pane, 0),
-                "visual_sash0": self._get_sash_pos(self.visual_pane, 0),
                 "page_zoom": self.page_zoom,
                 "preview_zoom": self.preview_zoom,
-            }
+            })
+            if self.workspace_layout_mode == "tabs":
+                data["tabs_visual_sash"] = self._get_sash_pos(
+                    self.visual_pane,
+                    0,
+                )
+            else:
+                data["split_list_sash"] = self._get_sash_pos(
+                    self.main_pane,
+                    1,
+                )
+                data["split_preview_sash"] = self._get_sash_pos(
+                    self.split_workspace_pane,
+                    0,
+                )
+            self.layout_state = data
             with open(self.layout_file, "w", encoding="utf-8") as f:
                 json.dump(data, f)
         except Exception:
