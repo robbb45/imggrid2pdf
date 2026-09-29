@@ -1855,7 +1855,9 @@ class PDFSheetUI:
         self.root.bind("<F2>", self._start_inline_rename)
 
     def _pick_folder(self):
-        folder = filedialog.askdirectory(initialdir=str(self.script_dir))
+        pasta_atual = self._current_images_folder()
+        pasta_inicial = pasta_atual if pasta_atual.is_dir() else self.script_dir
+        folder = filedialog.askdirectory(initialdir=str(pasta_inicial))
         if folder:
             folder_path = Path(folder)
             try:
