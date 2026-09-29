@@ -4725,6 +4725,7 @@ class PDFSheetUI:
         st = imagem.stat()
         return {
             "cache_schema_version": CACHE_SCHEMA_VERSION,
+            "rounded_border_clip_version": 1,
             "image": self._image_key(imagem),
             "mtime": int(st.st_mtime_ns),
             "size": int(st.st_size),

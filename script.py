@@ -888,6 +888,26 @@ def desenhar_borda_preta(img_rgba, config):
     if espessura <= 0:
         return
 
+    if raio > 0:
+        # Recorte o conteúdo até a face interna da borda antes de desenhá-la.
+        inset_interno = min(espessura, (min(w, h) - 1) // 2)
+        lado_interno = min(w, h) - 2 * inset_interno
+        raio_interno = min(max(0, raio - espessura // 2), lado_interno // 2)
+        escala_mascara = 2
+        mascara = Image.new("L", (w * escala_mascara, h * escala_mascara), 0)
+        ImageDraw.Draw(mascara).rounded_rectangle(
+            (
+                inset_interno * escala_mascara,
+                inset_interno * escala_mascara,
+                (w - 1 - inset_interno) * escala_mascara,
+                (h - 1 - inset_interno) * escala_mascara,
+            ),
+            radius=raio_interno * escala_mascara,
+            fill=255,
+        )
+        mascara = mascara.resize((w, h), Image.Resampling.LANCZOS)
+        img_rgba.paste((255, 255, 255, 255), (0, 0, w, h), ImageChops.invert(mascara))
+
     if estilo in ("tracejada", "pontilhada", "traco_ponto"):
         if estilo == "pontilhada":
             dash_pattern = [max(2, espessura), max(3, espessura * 2)]
