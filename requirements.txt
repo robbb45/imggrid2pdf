@@ -1,5 +1,6 @@
 # Core app
 Pillow
+tkinterdnd2
 
 # Default background removal backend.
 # Keep this base file small for packaging. Advanced backends are optional.

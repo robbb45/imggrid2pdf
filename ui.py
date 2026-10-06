@@ -15,6 +15,12 @@ from PIL import Image, ImageDraw, ImageTk
 
 import script
 
+try:
+    from tkinterdnd2 import DND_FILES, TkinterDnD
+except ImportError:
+    DND_FILES = None
+    TkinterDnD = None
+
 IMAGE_OVERRIDE_KEYS = (
     "remover_fundo_modo",
     "backend_remocao_fundo",
@@ -787,7 +793,7 @@ class PDFSheetUI:
         ).grid(row=0, column=0, sticky="w")
         ttk.Label(
             painel_cfg,
-            text="Duplo clique em um ajuste azul aplica o valor às outras imagens.",
+            text="Duplo clique em um ajuste azul pede confirmação para aplicar às outras imagens.",
             style="Muted.TLabel",
             wraplength=320,
             justify="left",
@@ -841,16 +847,16 @@ class PDFSheetUI:
             if key in self.apply_all_label_keys:
                 lbl.bind("<Double-Button-1>", lambda _e, k=key: self._apply_param_to_other_images(k))
                 lbl.bind("<Enter>", lambda _e, k=key: self._show_apply_all_hint(k))
-                self._bind_tooltip(lbl, key, apply_all=True)
+            self._bind_tooltip(
+                lbl,
+                key,
+                apply_all=key in self.apply_all_label_keys,
+                reset=True,
+            )
             return lbl
 
-        def bind_apply_all_widget(widget, key):
-            if key not in self.apply_all_label_keys:
-                self._bind_tooltip(widget, key)
-                return
-            widget.bind("<Double-Button-1>", lambda _e, k=key: self._apply_param_to_other_images(k), add="+")
-            widget.bind("<Enter>", lambda _e, k=key: self._show_apply_all_hint(k), add="+")
-            self._bind_tooltip(widget, key, apply_all=True)
+        def bind_parameter_widget(widget, key):
+            self._bind_tooltip(widget, key)
 
         appearance_box = ttk.LabelFrame(
             painel_cfg,
@@ -968,7 +974,7 @@ class PDFSheetUI:
             cb = ttk.Combobox(frame, textvariable=var, values=values, state="readonly", width=width)
             next_col = frame.grid_size()[0] if column is None else column
             cb.grid(row=row, column=next_col, padx=(8, 0), sticky="w")
-            bind_apply_all_widget(cb, key)
+            bind_parameter_widget(cb, key)
             return cb
 
         def add_inline_spin(frame, key, frm, to, width=4, row=0, column=None):
@@ -979,7 +985,7 @@ class PDFSheetUI:
             sp = ttk.Spinbox(frame, from_=frm, to=to, textvariable=var, width=width)
             next_col = frame.grid_size()[0] if column is None else column
             sp.grid(row=row, column=next_col, padx=(8, 0), sticky="w")
-            bind_apply_all_widget(sp, key)
+            bind_parameter_widget(sp, key)
             return sp
 
         def add_float(label, key, row):
@@ -1027,7 +1033,7 @@ class PDFSheetUI:
             width=8,
         )
         self.radius_spin.grid(row=row, column=1, sticky="ew", pady=3)
-        bind_apply_all_widget(self.radius_spin, "raio_borda")
+        bind_parameter_widget(self.radius_spin, "raio_borda")
         self._bind_tooltip(lbl_raio, "raio_borda")
         row += 1
         add_slider_float("Margem interna", "margem_interna_quadrado", row, 0.0, 0.25, apply_all=True)
@@ -1067,8 +1073,8 @@ class PDFSheetUI:
             style="Compact.TSpinbox",
         )
         self.offset_y_spin.pack(side="left", padx=(2, 0))
-        bind_apply_all_widget(self.offset_x_spin, "deslocamento_x")
-        bind_apply_all_widget(self.offset_y_spin, "deslocamento_y")
+        bind_parameter_widget(self.offset_x_spin, "deslocamento_x")
+        bind_parameter_widget(self.offset_y_spin, "deslocamento_y")
         self._bind_tooltip(lbl_offset, "deslocamento_x", apply_all=True)
         row += 1
 
@@ -1163,7 +1169,7 @@ class PDFSheetUI:
             variable=self.vars["rembg_alpha_matting"],
         )
         chk_alpha.grid(row=1, column=0, columnspan=2, sticky="w", pady=3)
-        self._bind_tooltip(chk_alpha, "rembg_alpha_matting", apply_all=True)
+        self._bind_tooltip(chk_alpha, "rembg_alpha_matting")
         self.vars["rembg_post_process_mask"] = tk.BooleanVar(value=bool(self.config.get("rembg_post_process_mask", False)))
         chk_post = ttk.Checkbutton(
             self.backend_rembg_frame,
@@ -1171,7 +1177,7 @@ class PDFSheetUI:
             variable=self.vars["rembg_post_process_mask"],
         )
         chk_post.grid(row=2, column=0, columnspan=2, sticky="w", pady=3)
-        self._bind_tooltip(chk_post, "rembg_post_process_mask", apply_all=True)
+        self._bind_tooltip(chk_post, "rembg_post_process_mask")
         make_apply_all_label(self.backend_rembg_frame, "FG threshold", "rembg_foreground_threshold", 3)
         self.vars["rembg_foreground_threshold"] = tk.IntVar(value=int(self.config.get("rembg_foreground_threshold", 240)))
         fg_frame = ttk.Frame(self.backend_rembg_frame)
@@ -1359,6 +1365,11 @@ class PDFSheetUI:
         ttk.Button(action_tools, text="Renomear", command=self._toggle_rename_panel).pack(
             side="left", padx=(0, 4)
         )
+        ttk.Button(
+            action_tools,
+            text="Atualizar pasta",
+            command=self._refresh_images_folder,
+        ).pack(side="left", padx=(0, 4))
         exclude_btn = ttk.Button(
             action_tools,
             text="Remover",
@@ -1605,6 +1616,7 @@ class PDFSheetUI:
         self.listbox.bind("<B1-Motion>", self._on_listbox_drag_motion)
         self.listbox.bind("<ButtonRelease-1>", self._on_listbox_drag_end)
         self.listbox.bind("<Delete>", self._exclude_selected_images)
+        self._setup_external_drop()
         self.info_img_var = tk.StringVar(value="")
         info_label = ttk.Label(
             topo,
@@ -1869,12 +1881,104 @@ class PDFSheetUI:
             self._sync_global_sidebar_vars()
             self._reload_everything()
 
+    def _refresh_images_folder(self):
+        selected = self._selected_images()
+        self._reload_everything(selected_paths=selected)
+        folder = self._current_images_folder()
+        if folder.exists():
+            self.status_var.set(f"Pasta de imagens atualizada: {folder}")
+        else:
+            self.status_var.set(f"Pasta de imagens não encontrada: {folder}")
+
     def _current_images_folder(self):
         cfg = self._get_config_ui()
         pasta = Path(cfg["pasta_imagens"])
         if not pasta.is_absolute():
             pasta = self.script_dir / pasta
         return pasta
+
+    @staticmethod
+    def _is_supported_image_file(path: Path):
+        return path.is_file() and path.suffix.lower() in script.EXTENSOES_ACEITAS
+
+    def _setup_external_drop(self):
+        if DND_FILES is None or not hasattr(self.listbox, "drop_target_register"):
+            return
+        try:
+            self.listbox.drop_target_register(DND_FILES)
+            self.listbox.dnd_bind("<<Drop>>", self._on_external_image_drop)
+        except Exception:
+            pass
+
+    def _on_external_image_drop(self, event):
+        try:
+            dropped_items = self.root.tk.splitlist(event.data)
+        except Exception:
+            dropped_items = (event.data,)
+        source_paths = [Path(item) for item in dropped_items if item]
+        if not source_paths:
+            self.status_var.set("Nenhum arquivo recebido no arraste.")
+            return event.action
+        self._import_external_images(source_paths)
+        return event.action
+
+    def _import_external_images(self, source_paths):
+        target_folder = self._current_images_folder()
+        try:
+            target_folder.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            messagebox.showerror(
+                "Erro ao preparar pasta",
+                f"Não foi possível preparar a pasta de imagens.\n\n{exc}",
+            )
+            return
+
+        copied = []
+        skipped = []
+        failures = []
+        for source in source_paths:
+            try:
+                resolved = source.expanduser().resolve()
+            except Exception:
+                resolved = source
+            if not self._is_supported_image_file(resolved):
+                skipped.append(source)
+                continue
+            try:
+                destination = target_folder / resolved.name
+                if script.normalizar_chave_imagem(destination) == script.normalizar_chave_imagem(resolved):
+                    skipped.append(source)
+                    continue
+                destination = script.obter_caminho_saida_disponivel(destination)
+                shutil.copy2(resolved, destination)
+                copied.append(destination)
+            except Exception as exc:
+                failures.append((source, exc))
+
+        if copied:
+            self._reload_everything(selected_paths=copied)
+            self.status_var.set(
+                f"{len(copied)} imagem(ns) adicionada(s) à pasta {target_folder.name}."
+            )
+        elif skipped and not failures:
+            self.status_var.set("Nenhuma imagem nova foi adicionada.")
+
+        if skipped:
+            skipped_names = "\n".join(path.name for path in skipped[:8])
+            extra = "" if len(skipped) <= 8 else f"\n... e mais {len(skipped) - 8}"
+            messagebox.showwarning(
+                "Arquivos ignorados",
+                "Alguns itens foram ignorados porque não são imagens suportadas ou já estão na pasta atual.\n\n"
+                f"{skipped_names}{extra}",
+            )
+
+        if failures:
+            failure_names = "\n".join(f"{path.name}: {exc}" for path, exc in failures[:8])
+            extra = "" if len(failures) <= 8 else f"\n... e mais {len(failures) - 8}"
+            messagebox.showerror(
+                "Erro ao adicionar imagens",
+                f"Não foi possível copiar {len(failures)} arquivo(s):\n\n{failure_names}{extra}",
+            )
 
     def _last_cropper_folder(self):
         pasta = str(self.global_cfg.get("ultima_pasta_recorte", "") or "").strip()
@@ -2293,6 +2397,88 @@ class PDFSheetUI:
         if refresh_page_preview:
             self._render_page_preview_thread()
 
+    def _confirm_apply_to_other_images(self, keys, image_count):
+        labels = {
+            "borda_preta_espessura": "espessura da borda",
+            "cor_borda": "cor da borda",
+            "estilo_borda": "estilo da borda",
+            "raio_borda": "raio da borda",
+            "margem_interna_quadrado": "margem interna",
+            "deslocamento_x": "deslocamento X",
+            "deslocamento_y": "deslocamento Y",
+            "tamanho_numero_relativo": "tamanho do número",
+            "cor_numero": "cor do número",
+            "padding_numero": "espaçamento do número",
+            "numero_glow_blur": "desfoque do brilho",
+            "numero_glow_opacidade": "opacidade do brilho",
+            "limiar_alpha": "limiar alpha",
+            "tolerancia_fundo": "tolerância do fundo",
+            "remover_fundo_modo": "remoção de fundo",
+            "backend_remocao_fundo": "backend de fundo",
+            "modelo_remocao_fundo": "modelo rembg",
+            "modo_inspyrenet": "modo InSPyReNet",
+            "inspyrenet_device": "dispositivo InSPyReNet",
+            "rembg_alpha_matting": "alpha matting",
+            "rembg_post_process_mask": "pós-processamento da máscara",
+            "rembg_foreground_threshold": "limiar de primeiro plano",
+            "rembg_background_threshold": "limiar de fundo",
+            "rembg_erode_size": "erosão da máscara",
+        }
+        names = []
+        for key in keys:
+            name = labels.get(key, key.replace("_", " "))
+            if name not in names:
+                names.append(name)
+        parameter_text = " e ".join(names)
+        image_text = "1 outra imagem" if image_count == 1 else f"{image_count} outras imagens"
+
+        result = {"confirmed": False}
+        win = tk.Toplevel(self.root)
+        win.title("Confirmar aplicação em lote")
+        win.resizable(False, False)
+        win.transient(self.root)
+        win.protocol("WM_DELETE_WINDOW", win.destroy)
+
+        body = ttk.Frame(win, padding=(22, 18))
+        body.grid(row=0, column=0, sticky="nsew")
+        ttk.Label(
+            body,
+            text="Aplicar este ajuste a todas?",
+            style="SectionTitle.TLabel",
+        ).grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(
+            body,
+            text=(
+                f"Isso substituirá {parameter_text} em {image_text}.\n"
+                "A imagem selecionada permanece como está."
+            ),
+            wraplength=390,
+            justify="left",
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 18))
+
+        def confirm():
+            result["confirmed"] = True
+            win.destroy()
+
+        cancel_button = ttk.Button(body, text="Cancelar", command=win.destroy)
+        cancel_button.grid(row=2, column=0, sticky="e", padx=(0, 6))
+        ttk.Button(
+            body,
+            text="Aplicar a todas",
+            command=confirm,
+            style="Primary.TButton",
+        ).grid(row=2, column=1, sticky="w")
+
+        win.bind("<Escape>", lambda _event: win.destroy())
+        win.update_idletasks()
+        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - win.winfo_reqwidth()) // 2)
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - win.winfo_reqheight()) // 2)
+        win.geometry(f"+{x}+{y}")
+        win.grab_set()
+        cancel_button.focus_set()
+        self.root.wait_window(win)
+        return result["confirmed"]
+
     def _apply_param_to_other_images(self, key, value=None):
         if self.imagem_atual is None or not self.imagens:
             return
@@ -2311,6 +2497,17 @@ class PDFSheetUI:
             else:
                 values[group_key] = cfg_atual.get(group_key)
         if any(v is None for v in values.values()):
+            return
+
+        target_count = sum(
+            self._image_key(imagem) != selected_key
+            for imagem in self.imagens
+        )
+        if target_count == 0:
+            self.status_var.set("Não há outras imagens para atualizar.")
+            return
+        if not self._confirm_apply_to_other_images(group_keys, target_count):
+            self.status_var.set("Aplicação em lote cancelada.")
             return
 
         changed = 0
@@ -3730,10 +3927,10 @@ class PDFSheetUI:
             self._set_backend_selection_pending(False)
             self._update_backend_specific_controls()
 
-    def _bind_tooltip(self, widget, key, apply_all=False):
+    def _bind_tooltip(self, widget, key, apply_all=False, reset=False):
         text = self.param_help.get(key, "")
         override_key = "remover_fundo_modo" if key == "remover_fundo_local" else key
-        if override_key in IMAGE_OVERRIDE_KEYS:
+        if reset and override_key in IMAGE_OVERRIDE_KEYS:
             if not getattr(widget, "_app_reset_bound", False):
                 widget.bind(
                     "<Button-3>",
@@ -3741,6 +3938,7 @@ class PDFSheetUI:
                     add="+",
                 )
                 setattr(widget, "_app_reset_bound", True)
+        if getattr(widget, "_app_reset_bound", False):
             reset_help = "Clique com o botão direito para voltar este parâmetro ao padrão global."
             text = f"{text}\n\n{reset_help}" if text else reset_help
         try:
@@ -3748,7 +3946,7 @@ class PDFSheetUI:
         except Exception:
             is_apply_all_label = False
         if apply_all or is_apply_all_label:
-            extra = "Duplo clique no nome do parâmetro para aplicar este valor a todas as outras imagens."
+            extra = "Duplo clique no nome do parâmetro para confirmar a aplicação deste valor às outras imagens."
             text = f"{text}\n\n{extra}" if text else extra
         if text:
             existing = getattr(widget, "_app_tooltip", None)
@@ -3852,7 +4050,7 @@ class PDFSheetUI:
         except Exception as exc:
             self.status_var.set(f"Erro ao aplicar layout global: {exc}")
 
-    def _load_images(self):
+    def _load_images(self, selected_paths=None):
         cfg = self._get_config_ui()
         pasta = Path(cfg["pasta_imagens"])
         if not pasta.is_absolute():
@@ -3869,21 +4067,32 @@ class PDFSheetUI:
         self.imagens = script.listar_imagens(pasta)
         if hasattr(self, "sort_mode_var"):
             self.sort_mode_var.set("Nome A-Z")
-        self._refresh_image_listbox()
+        self._refresh_image_listbox(selected_paths=selected_paths)
         if self.imagens:
-            self._on_select_image()
+            if selected_paths:
+                self._on_select_image()
+            elif not self.listbox.curselection():
+                self.listbox.selection_set(0)
+                self._on_select_image()
+            else:
+                self._on_select_image()
         else:
             self.info_img_var.set("Nenhuma imagem encontrada.")
 
-    def _reload_everything(self):
+    def _reload_everything(self, selected_paths=None):
         self.preview_cache.clear()
         self.page_cache.clear()
         self.rembg_cache.clear()
         self.raw_cache.clear()
         self.figure_cache.clear()
         self.preview_raw_cache.clear()
+        self.image_content_cache.clear()
         self.page_layout_cache = []
-        self._load_images()
+        self.page_layout_signature = None
+        self.paginas_cache = []
+        self.page_preview_meta = None
+        self.preview_pagina_ref = None
+        self._load_images(selected_paths=selected_paths)
         self._refresh_all_previews()
 
     def _on_select_image(self):
@@ -4912,7 +5121,7 @@ class PDFSheetUI:
 
 
 def main():
-    root = tk.Tk()
+    root = TkinterDnD.Tk() if TkinterDnD is not None else tk.Tk()
     app = PDFSheetUI(root)
     root.mainloop()
 
