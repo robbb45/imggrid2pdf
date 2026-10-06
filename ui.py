@@ -4672,8 +4672,8 @@ class PDFSheetUI:
         layout = self.page_layout_cache
         patched_any = False
 
-        for page_index, page_layout in enumerate(layout):
-            for item in page_layout:
+        for page_index, page_items in enumerate(layout):
+            for item in page_items:
                 caminho = item["img"]
                 if self._image_key(caminho) not in self.dirty_page_images:
                     continue
@@ -5192,7 +5192,7 @@ class PDFSheetUI:
         h, meta = self._pages_cache_paths(page_key)
         try:
             serial_layout = []
-            for page_layout in layout:
+            for page_items in layout:
                 serial_layout.append(
                     [
                         {
@@ -5201,7 +5201,7 @@ class PDFSheetUI:
                             "y": int(item["y"]),
                             **{key: int(item[key]) for key in ("size", "width", "height", "content_width", "content_height", "rotation") if key in item},
                         }
-                        for item in page_layout
+                        for item in page_items
                     ]
                 )
             for i, page in enumerate(paginas):
@@ -5255,7 +5255,7 @@ class PDFSheetUI:
                 with Image.open(p) as im:
                     paginas.append(im.convert("RGB"))
             layout = []
-            for page_layout in data.get("layout", []):
+            for page_items in data.get("layout", []):
                 layout.append(
                     [
                         {
@@ -5264,7 +5264,7 @@ class PDFSheetUI:
                             "y": int(item["y"]),
                             **{key: int(item[key]) for key in ("size", "width", "height", "content_width", "content_height", "rotation") if key in item},
                         }
-                        for item in page_layout
+                        for item in page_items
                     ]
                 )
             return paginas, layout

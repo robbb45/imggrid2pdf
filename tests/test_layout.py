@@ -234,6 +234,37 @@ class RenderingTests(unittest.TestCase):
         self.assertFalse(self.app.render_lock.locked())
         self.app.root.after.assert_any_call(0, self.app._render_page_preview_thread)
 
+    def test_real_page_preview_worker_and_grid_update(self):
+        import threading
+        for mode in ("grid", "encaixe"):
+            with self.subTest(mode=mode):
+                cfg = {**self.cfg, "modo_layout": mode, "figuras_por_pagina": 4}
+                self.app.global_cfg = cfg
+                self.app.root = Mock()
+                self.app.status_var = Mock()
+                self.app._stop_progress = Mock()
+                self.app._update_page_preview_ui = Mock()
+                self.app.render_lock = threading.Lock()
+                self.app.render_lock.acquire()
+                self.app.page_cache = {}
+                self.app.paginas_cache = []
+                self.app.page_layout_cache = []
+                self.app.page_layout_signature = None
+                self.app.dirty_page_images = set()
+                self.app.indice_pagina_preview = 0
+                configs = {path: self.app._effective_config_for_image(path, cfg) for path in self.paths}
+                key = self.app._page_cache_key(cfg)
+                self.app._render_page_preview_worker(cfg, self.paths, configs, key)
+                self.assertEqual(len(self.app.paginas_cache), 2)
+                self.assertEqual([len(p) for p in self.app.page_layout_cache], [4, 1])
+                self.assertFalse(self.app.render_lock.locked())
+                self.app.root.after.assert_any_call(0, self.app._update_page_preview_ui)
+                if mode == "grid":
+                    self.app.dirty_page_images = {self.app._image_key(self.paths[0])}
+                    patched = self.app._try_patch_dirty_page_cells(cfg, configs)
+                    self.assertIsNotNone(patched)
+                    self.assertEqual(len(patched[0]), 2)
+
     def test_export_uses_captured_image_settings(self):
         captured = {path: self.app._effective_config_for_image(path, self.cfg) for path in self.paths}
         expected, _ = self.app._criar_paginas_ui(self.paths, self.cfg, captured)
