@@ -17,6 +17,8 @@ O giro de 90° é opcional e fica desativado por padrão. As bordas, seus estilo
 
 A prévia informa a área resultante das figuras em cm². O algoritmo testa diferentes encaixes MaxRects e escalas; procura um bom aproveitamento, sem garantir o ótimo matemático ou o preenchimento integral da folha.
 
+Para ocultar o número ou nome no canto, desmarque **Número/nome → Mostrar** nos ajustes da imagem. Isso oculta também o brilho atrás do texto, tanto nas prévias quanto no PDF, nos dois modos de composição. Dê duplo clique no nome do ajuste para aplicar às outras imagens, ou altere o padrão em **Configurações Globais → Mostrar número/nome nas imagens**.
+
 ## Verificação
 
 Com Pillow instalado:

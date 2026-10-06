@@ -158,6 +158,7 @@ CONFIG_PADRAO = {
     "deslocamento_y": 0,
 
     "posicao_padrao_numero": "superior_esquerdo",
+    "mostrar_numero": True,
     "tamanho_numero_relativo": 0.085,
     "padding_numero": 10,
     "caixa_numero_padding_x": 10,
@@ -1001,6 +1002,8 @@ def desenhar_borda_preta(img_rgba, config):
 
 
 def desenhar_numero_com_glow(img_rgba, texto, posicao, config, referencia_tamanho=None):
+    if not bool(config.get("mostrar_numero", True)):
+        return
     draw = ImageDraw.Draw(img_rgba)
     w, h = img_rgba.size
 

@@ -187,6 +187,42 @@ class RenderingTests(unittest.TestCase):
             result = script.renderizar_figura_retangular(cropped, rect, cfg_style, "123456", "inferior_direito")
             self.assertEqual(result.size, (rect["width"], rect["height"]))
 
+    def test_hidden_number_or_name_does_not_draw_text_or_glow(self):
+        for text in ("01", "Nome da imagem"):
+            for reference in (None, 200):
+                with self.subTest(text=text, reference=reference):
+                    original = Image.new("RGBA", (500, 250), (45, 100, 160, 255))
+                    hidden = original.copy()
+                    script.desenhar_numero_com_glow(hidden, text, "superior_esquerdo",
+                                                   {**self.cfg, "mostrar_numero": False}, reference)
+                    self.assertEqual(hidden.tobytes(), original.tobytes())
+                    visible = original.copy()
+                    script.desenhar_numero_com_glow(visible, text, "superior_esquerdo", self.cfg, reference)
+                    self.assertIsNotNone(ImageChops.difference(visible.convert("RGB"), original.convert("RGB")).getbbox())
+
+    def test_number_visibility_invalidates_cache_and_restores_labels(self):
+        for mode in ("grid", "encaixe"):
+            with self.subTest(mode=mode):
+                cfg = {**self.cfg, "modo_layout": mode, "figuras_por_pagina": 4, "mostrar_numero": True}
+                self.app.global_cfg = cfg
+                visible, visible_layout = self.app._criar_paginas_ui(self.paths, cfg)
+                visible_key = self.app._page_cache_key(cfg)
+                hidden_cfg = {**cfg, "mostrar_numero": False}
+                self.app.global_cfg = hidden_cfg
+                hidden, hidden_layout = self.app._criar_paginas_ui(self.paths, hidden_cfg)
+                self.assertEqual(visible_layout, hidden_layout)
+                self.assertNotEqual(visible_key, self.app._page_cache_key(hidden_cfg))
+                self.assertNotEqual(self.app._preview_cache_key(self.paths[0], cfg),
+                                    self.app._preview_cache_key(self.paths[0], hidden_cfg))
+                self.assertTrue(all(ImageChops.difference(a, b).getbbox() for a, b in zip(visible, hidden)))
+                self.app.global_cfg = cfg
+                restored, _ = self.app._criar_paginas_ui(self.paths, cfg)
+                self.assertTrue(all(ImageChops.difference(a, b).getbbox() is None for a, b in zip(visible, restored)))
+                self.app.image_overrides = {self.app._image_key(self.paths[0]): {"mostrar_numero": False}}
+                self.assertFalse(self.app._effective_config_for_image(self.paths[0], cfg)["mostrar_numero"])
+                self.assertTrue(self.app._effective_config_for_image(self.paths[1], cfg)["mostrar_numero"])
+                self.app.image_overrides = {}
+
     def test_rectangle_click_selection(self):
         self.app.paginas_cache = [Image.new("RGB", (300, 200))]
         self.app.indice_pagina_preview = 0
@@ -295,6 +331,10 @@ class RenderingTests(unittest.TestCase):
              patch.object(ui.PDFSheetUI, "_save_config"), patch.object(ui.PDFSheetUI, "_refresh_image_preview_async"), \
              patch.object(ui.PDFSheetUI, "_render_page_preview_thread"):
             app = ui.PDFSheetUI(root)
+            self.assertTrue(app.vars["mostrar_numero"].get())
+            app.show_number_check.invoke()
+            self.assertFalse(app.vars["mostrar_numero"].get())
+            self.assertIs(app._collect_image_override_cfg()["mostrar_numero"], False)
             self.assertEqual(app.composition_tabs.index("current"), 0)
             self.assertFalse(app.global_sidebar_vars["encaixe_mesma_area"].get())
             app.composition_tabs.select(1)

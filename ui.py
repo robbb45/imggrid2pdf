@@ -42,6 +42,7 @@ IMAGE_OVERRIDE_KEYS = (
     "estilo_borda",
     "raio_borda",
     "tamanho_numero_relativo",
+    "mostrar_numero",
     "padding_numero",
     "caixa_numero_padding_x",
     "caixa_numero_padding_y",
@@ -734,6 +735,7 @@ class PDFSheetUI:
             "encaixe_altura_max_cm": "Limite opcional da altura da figura impressa, sem borda e margem interna. Zero significa sem limite adicional.",
             "encaixe_permitir_giro": "Permite girar imagens 90° para melhorar o encaixe. A numeração é desenhada depois do giro e continua legível.",
             "tamanho_numero_relativo": "Tamanho do número relativo ao tamanho da célula.",
+            "mostrar_numero": "Mostra ou oculta o número/nome e seu brilho na imagem. Vale para as prévias e o PDF. Duplo clique no nome do ajuste permite aplicar às outras imagens.",
             "padding_numero": "Distância do número em relação à borda interna da célula.",
             "numero_glow_blur": "Desfoque do brilho branco atrás do número (halo).",
             "numero_glow_opacidade": "Opacidade do brilho branco do número (0 a 255).",
@@ -770,6 +772,7 @@ class PDFSheetUI:
             "deslocamento_x",
             "deslocamento_y",
             "tamanho_numero_relativo",
+            "mostrar_numero",
             "padding_numero",
             "numero_glow_blur",
             "numero_glow_opacidade",
@@ -1123,6 +1126,12 @@ class PDFSheetUI:
         self._bind_tooltip(lbl_offset, "deslocamento_x", apply_all=True)
         row += 1
 
+        make_apply_all_label(control_parent, "Número/nome", "mostrar_numero", row)
+        self.vars["mostrar_numero"] = tk.BooleanVar(value=bool(self.config.get("mostrar_numero", True)))
+        self.show_number_check = ttk.Checkbutton(control_parent, text="Mostrar", variable=self.vars["mostrar_numero"])
+        self.show_number_check.grid(row=row, column=1, sticky="w", pady=3)
+        self._bind_tooltip(self.show_number_check, "mostrar_numero")
+        row += 1
         lbl_tnr = make_apply_all_label(control_parent, "Tamanho número (%)", "tamanho_numero_relativo", row)
         self.vars["tamanho_numero_relativo"] = tk.DoubleVar(value=float(self.config.get("tamanho_numero_relativo", 0.085)))
         frame_num = ttk.Frame(control_parent)
@@ -2452,6 +2461,7 @@ class PDFSheetUI:
             "deslocamento_x": "deslocamento X",
             "deslocamento_y": "deslocamento Y",
             "tamanho_numero_relativo": "tamanho do número",
+            "mostrar_numero": "visibilidade do número/nome",
             "cor_numero": "cor do número",
             "padding_numero": "espaçamento do número",
             "numero_glow_blur": "desfoque do brilho",
@@ -3258,11 +3268,13 @@ class PDFSheetUI:
         update_backend_groups()
 
         bool_vars = {
+            "mostrar_numero": tk.BooleanVar(value=bool(self.global_cfg.get("mostrar_numero", True))),
             "evitar_sobrescrever_pdf": tk.BooleanVar(value=bool(self.global_cfg.get("evitar_sobrescrever_pdf", True))),
             "salvar_paginas_png": tk.BooleanVar(value=bool(self.global_cfg.get("salvar_paginas_png", False))),
             "auto_preview_pagina": tk.BooleanVar(value=bool(self.global_cfg.get("auto_preview_pagina", False))),
         }
         for key, text in [
+            ("mostrar_numero", "Mostrar número/nome nas imagens"),
             ("evitar_sobrescrever_pdf", "Não sobrescrever PDF"),
             ("salvar_paginas_png", "Salvar páginas PNG"),
             ("auto_preview_pagina", "Auto prévia de página"),
@@ -4733,6 +4745,7 @@ class PDFSheetUI:
             int(cfg_img.get("deslocamento_x", 0)),
             int(cfg_img.get("deslocamento_y", 0)),
             float(cfg_img.get("tamanho_numero_relativo", 0.085)),
+            bool(cfg_img.get("mostrar_numero", True)),
             int(cfg_img.get("padding_numero", 10)),
             int(cfg_img.get("caixa_numero_padding_x", 10)),
             int(cfg_img.get("caixa_numero_padding_y", 6)),
@@ -4897,6 +4910,7 @@ class PDFSheetUI:
             str(cfg.get("estilo_borda", "solida")),
             int(cfg.get("raio_borda", 0)),
             float(cfg.get("tamanho_numero_relativo", 0.085)),
+            bool(cfg.get("mostrar_numero", True)),
             int(cfg.get("padding_numero", 10)),
             int(cfg.get("caixa_numero_padding_x", 10)),
             int(cfg.get("caixa_numero_padding_y", 6)),
@@ -5020,6 +5034,7 @@ class PDFSheetUI:
             str(cfg.get("estilo_borda", "solida")),
             int(cfg.get("raio_borda", 0)),
             float(cfg.get("tamanho_numero_relativo", 0.085)),
+            bool(cfg.get("mostrar_numero", True)),
             int(cfg.get("padding_numero", 10)),
             int(cfg.get("caixa_numero_padding_x", 10)),
             int(cfg.get("caixa_numero_padding_y", 6)),
@@ -5102,6 +5117,7 @@ class PDFSheetUI:
             "estilo_borda": str(cfg.get("estilo_borda", "solida")),
             "raio_borda": int(cfg.get("raio_borda", 0)),
             "tamanho_numero_relativo": float(cfg.get("tamanho_numero_relativo", 0.085)),
+            "mostrar_numero": bool(cfg.get("mostrar_numero", True)),
             "padding_numero": int(cfg.get("padding_numero", 10)),
             "caixa_numero_padding_x": int(cfg.get("caixa_numero_padding_x", 10)),
             "caixa_numero_padding_y": int(cfg.get("caixa_numero_padding_y", 6)),
