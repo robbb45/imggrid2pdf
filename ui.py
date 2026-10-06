@@ -14,6 +14,7 @@ from tkinter import colorchooser, filedialog, messagebox, ttk
 from PIL import Image, ImageDraw, ImageTk
 
 import script
+import layout as page_layout
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -58,7 +59,7 @@ BACKEND_SELECTION_KEYS = (
     "inspyrenet_device",
 )
 
-CACHE_SCHEMA_VERSION = 3
+CACHE_SCHEMA_VERSION = 4
 
 
 class ToolTip:
@@ -125,6 +126,7 @@ class PDFSheetUI:
         self.render_lock = threading.Lock()
         self.preview_lock = threading.Lock()
         self.preview_req_id = 0
+        self.preview_refresh_pending = False
         self.preview_after_id = None
         self.page_auto_after_id = None
         self.preview_resize_after_id = None
@@ -722,9 +724,15 @@ class PDFSheetUI:
             "borda_preta_espessura": "Espessura da borda de recorte em cada célula (em pixels).",
             "estilo_borda": "Estilo da borda de recorte da imagem: sólida ou tracejada.",
             "raio_borda": "Arredondamento dos cantos da borda de recorte (em pixels).",
-            "margem_interna_quadrado": "Margem interna da imagem dentro do quadrado (0.00 a 0.25).",
-            "deslocamento_x": "Move a imagem horizontalmente dentro do quadrado. Valores negativos movem para a esquerda; positivos, para a direita.",
-            "deslocamento_y": "Move a imagem verticalmente dentro do quadrado. Valores negativos movem para cima; positivos, para baixo.",
+            "margem_interna_quadrado": "Margem interna da imagem dentro da moldura (0.00 a 0.25).",
+            "deslocamento_x": "Move a imagem horizontalmente dentro da moldura. Valores negativos movem para a esquerda; positivos, para a direita.",
+            "deslocamento_y": "Move a imagem verticalmente dentro da moldura. Valores negativos movem para cima; positivos, para baixo.",
+            "encaixe_figuras_por_pagina": "Quantidade exata por página completa, de 1 a 100. A última página recebe as imagens restantes.",
+            "encaixe_mesma_area": "Opcional: todas as figuras têm a mesma área impressa em todo o PDF, inclusive na última página. As proporções são preservadas. Desmarcado, cada figura pode crescer no espaço disponível.",
+            "encaixe_area_max_cm2": "Limite opcional da área da figura impressa, sem a borda e a margem interna. Zero deixa o programa escolher o maior tamanho que cabe.",
+            "encaixe_largura_max_cm": "Limite opcional da largura da figura impressa, sem borda e margem interna. Zero significa sem limite adicional.",
+            "encaixe_altura_max_cm": "Limite opcional da altura da figura impressa, sem borda e margem interna. Zero significa sem limite adicional.",
+            "encaixe_permitir_giro": "Permite girar imagens 90° para melhorar o encaixe. A numeração é desenhada depois do giro e continua legível.",
             "tamanho_numero_relativo": "Tamanho do número relativo ao tamanho da célula.",
             "padding_numero": "Distância do número em relação à borda interna da célula.",
             "numero_glow_blur": "Desfoque do brilho branco atrás do número (halo).",
@@ -807,11 +815,12 @@ class PDFSheetUI:
         global_box.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 10))
         global_box.columnconfigure(1, weight=1)
 
-        def add_global_combo(label, key, row, values):
-            ttk.Label(global_box, text=label).grid(row=row, column=0, sticky="w", pady=3)
+        def add_global_combo(label, key, row, values, parent=None):
+            parent = global_box if parent is None else parent
+            ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=3)
             var = tk.StringVar(value=str(self.global_cfg.get(key, script.CONFIG_PADRAO.get(key, ""))))
             self.global_sidebar_vars[key] = var
-            cb = ttk.Combobox(global_box, textvariable=var, values=values, state="readonly", width=12)
+            cb = ttk.Combobox(parent, textvariable=var, values=values, state="readonly", width=12)
             cb.grid(row=row, column=1, sticky="ew", pady=3)
             self._bind_tooltip(cb, key)
 
@@ -828,7 +837,43 @@ class PDFSheetUI:
             ttk.Label(frame, textvariable=var, width=4).grid(row=0, column=1, padx=(6, 0))
             self._bind_tooltip(frame, key)
 
-        add_global_combo("Figuras/página", "figuras_por_pagina", 0, ["12", "9", "6", "4"])
+        self.composition_tabs = ttk.Notebook(global_box)
+        self.composition_tabs.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        grid_settings = ttk.Frame(self.composition_tabs, padding=(8, 8))
+        auto_settings = ttk.Frame(self.composition_tabs, padding=(8, 8))
+        for panel in (grid_settings, auto_settings):
+            panel.columnconfigure(1, weight=1)
+        self.composition_tabs.add(grid_settings, text="Grid")
+        self.composition_tabs.add(auto_settings, text="Encaixe automático")
+        add_global_combo("Figuras/página", "figuras_por_pagina", 0, ["12", "9", "6", "4"], grid_settings)
+        ttk.Label(grid_settings, text="Molduras quadradas em grade regular.", style="Muted.TLabel", wraplength=270).grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+
+        def add_auto_field(label, key, row, integer=False):
+            ttk.Label(auto_settings, text=label).grid(row=row, column=0, sticky="w", pady=3)
+            var_class = tk.StringVar if integer else tk.DoubleVar
+            var = var_class(value=self.global_cfg.get(key, script.CONFIG_PADRAO[key]))
+            self.global_sidebar_vars[key] = var
+            widget = ttk.Spinbox(auto_settings, textvariable=var, from_=1 if integer else 0,
+                                 to=100 if integer else 1000, increment=1 if integer else 0.5, width=7)
+            widget.grid(row=row, column=1, sticky="ew", pady=3)
+            self._bind_tooltip(widget, key)
+
+        add_auto_field("Figuras/página", "encaixe_figuras_por_pagina", 0, True)
+        for key, label, row in (("encaixe_mesma_area", "Padronizar por mesma área", 1),
+                                ("encaixe_permitir_giro", "Permitir giro de 90°", 5)):
+            var = tk.BooleanVar(value=bool(self.global_cfg.get(key, False)))
+            self.global_sidebar_vars[key] = var
+            widget = ttk.Checkbutton(auto_settings, text=label, variable=var)
+            widget.grid(row=row, column=0, columnspan=2, sticky="w", pady=4)
+            self._bind_tooltip(widget, key)
+        add_auto_field("Área máxima (cm²)", "encaixe_area_max_cm2", 2)
+        add_auto_field("Largura máx. (cm)", "encaixe_largura_max_cm", 3)
+        add_auto_field("Altura máx. (cm)", "encaixe_altura_max_cm", 4)
+        ttk.Label(auto_settings, text="Limites opcionais: 0 = automático.\nÁrea da figura, sem borda e margem.", style="Muted.TLabel", wraplength=270).grid(row=6, column=0, columnspan=2, sticky="w", pady=(5, 2))
+        self.layout_summary_var = tk.StringVar(value="Área calculada ao montar a folha.")
+        ttk.Label(auto_settings, textvariable=self.layout_summary_var, wraplength=270).grid(row=7, column=0, columnspan=2, sticky="w", pady=(5, 0))
+        self.composition_tabs.select(1 if page_layout.automatic(self.global_cfg) else 0)
+        self.composition_tabs.bind("<<NotebookTabChanged>>", self._on_composition_tab_changed)
         add_global_combo("Orientação", "orientacao", 1, ["horizontal", "vertical"])
         add_global_slider("Margem externa", "margem_externa", 2, 0, 250)
         add_global_slider("Espaço horizontal", "espaco_horizontal", 3, 0, 160)
@@ -2181,7 +2226,7 @@ class PDFSheetUI:
         self.page_layout_signature = None
         self.paginas_cache = []
         self.dirty_page_images = {self._image_key(p) for p in self.imagens}
-        if bool(self.global_cfg.get("auto_preview_pagina", False)):
+        if page_layout.automatic(self.global_cfg) or bool(self.global_cfg.get("auto_preview_pagina", False)):
             self._render_page_preview_thread()
         else:
             self.page_info_var.set("Página 0/0")
@@ -4018,8 +4063,27 @@ class PDFSheetUI:
             for key, var in self.global_sidebar_vars.items():
                 if key in self.global_cfg:
                     var.set(self.global_cfg[key])
+            self.composition_tabs.select(1 if page_layout.automatic(self.global_cfg) else 0)
         finally:
             self.suspend_trace = False
+
+    def _on_composition_tab_changed(self, _event=None):
+        selected = self.composition_tabs.select()
+        if selected:
+            panel = self.composition_tabs.nametowidget(selected)
+            self.composition_tabs.configure(height=panel.winfo_reqheight())
+        if self.suspend_trace:
+            return
+        mode = "encaixe" if self.composition_tabs.index("current") == 1 else "grid"
+        if mode == self.global_cfg.get("modo_layout", "grid"):
+            return
+        if self.global_sidebar_after_id is not None:
+            self.root.after_cancel(self.global_sidebar_after_id)
+            self.global_sidebar_after_id = None
+        self.global_cfg["modo_layout"] = mode
+        self._apply_global_sidebar_change()
+        if self.imagens:
+            self._render_page_preview_thread()
 
     def _on_global_sidebar_change(self, *_):
         if self.suspend_trace:
@@ -4028,27 +4092,43 @@ class PDFSheetUI:
             self.root.after_cancel(self.global_sidebar_after_id)
         self.global_sidebar_after_id = self.root.after(300, self._apply_global_sidebar_change)
 
-    def _apply_global_sidebar_change(self):
+    def _apply_global_sidebar_change(self, render_preview=True):
+        self.global_sidebar_after_id = None
         try:
+            updated = dict(self.global_cfg)
             for key, var in self.global_sidebar_vars.items():
                 val = var.get()
-                if key in ("figuras_por_pagina", "margem_externa", "espaco_horizontal", "espaco_vertical", "limite_lado_processamento", "raio_borda"):
-                    self.global_cfg[key] = int(float(val))
+                if key in ("figuras_por_pagina", "encaixe_figuras_por_pagina", "margem_externa", "espaco_horizontal", "espaco_vertical", "limite_lado_processamento", "raio_borda"):
+                    if key == "encaixe_figuras_por_pagina" and not float(val).is_integer():
+                        raise ValueError("A quantidade de imagens por página deve ser um número inteiro.")
+                    updated[key] = int(float(val))
+                elif key in ("encaixe_mesma_area", "encaixe_permitir_giro"):
+                    updated[key] = bool(val)
+                elif key in ("encaixe_area_max_cm2", "encaixe_largura_max_cm", "encaixe_altura_max_cm"):
+                    updated[key] = float(val)
                 else:
-                    self.global_cfg[key] = str(val)
+                    updated[key] = str(val)
+            page_layout.validate(updated, script.obter_tamanho_pagina(updated))
+            self.global_cfg = updated
             self._save_config()
             self.page_cache.clear()
             self.raw_cache.clear()
             self.figure_cache.clear()
             self.preview_raw_cache.clear()
             self.page_layout_cache = []
+            self.paginas_cache = []
+            self._clear_page_preview_canvas()
+            self.page_info_var.set("Página 0/0")
             self.dirty_page_images = {self._image_key(p) for p in self.imagens}
-            if bool(self.global_cfg.get("auto_preview_pagina", False)):
+            self._refresh_image_preview_async()
+            if render_preview and (page_layout.automatic(self.global_cfg) or bool(self.global_cfg.get("auto_preview_pagina", False))):
                 self._render_page_preview_thread()
             else:
                 self._try_show_cached_page_preview()
+            return True
         except Exception as exc:
             self.status_var.set(f"Erro ao aplicar layout global: {exc}")
+            return False
 
     def _load_images(self, selected_paths=None):
         cfg = self._get_config_ui()
@@ -4163,7 +4243,7 @@ class PDFSheetUI:
             self.root.after_cancel(self.preview_after_id)
         self.preview_after_id = self.root.after(350, self._refresh_image_preview_async)
 
-        if bool(self.vars.get("auto_preview_pagina", tk.BooleanVar(value=False)).get()):
+        if page_layout.automatic(self.global_cfg) or bool(self.vars.get("auto_preview_pagina", tk.BooleanVar(value=False)).get()):
             if self.page_auto_after_id is not None:
                 self.root.after_cancel(self.page_auto_after_id)
             self.page_auto_after_id = self.root.after(1200, self._render_page_preview_thread)
@@ -4171,6 +4251,8 @@ class PDFSheetUI:
     def _refresh_all_previews(self):
         self._refresh_image_preview_async()
         self._try_show_cached_page_preview()
+        if page_layout.automatic(self.global_cfg) and not self.paginas_cache:
+            self._render_page_preview_thread()
 
     def _try_show_cached_page_preview(self):
         if not self.imagens:
@@ -4210,6 +4292,8 @@ class PDFSheetUI:
         if self.imagem_atual is None:
             return
         if not self.preview_lock.acquire(blocking=False):
+            self.preview_req_id += 1
+            self.preview_refresh_pending = True
             return
 
         self.preview_req_id += 1
@@ -4262,13 +4346,18 @@ class PDFSheetUI:
                     original, cropped, numero, posicao = raw[0].copy(), raw[1].copy(), raw[2], raw[3]
                 numero, posicao = script.interpretar_nome_arquivo(imagem, cfg_img)
 
-                fig_key_data = self._figure_key_data(imagem, cfg_img, 720, numero, posicao)
-                final = self._load_figure_cache_disk(imagem, 720, fig_key_data)
+                rect = script.retangulo_preview(cropped, cfg_img) if page_layout.automatic(cfg_img) else None
+                figure_size = (rect["width"], rect["height"], rect["content_width"], rect["content_height"], rect["rotation"]) if rect else 720
+                fig_key_data = self._figure_key_data(imagem, cfg_img, figure_size, numero, posicao)
+                final = self._load_figure_cache_disk(imagem, figure_size, fig_key_data)
                 if final is None:
-                    final = script.transformar_em_quadrado_com_margem(cropped, 720, cfg_img)
-                    script.desenhar_borda_preta(final, cfg_img)
-                    script.desenhar_numero_com_glow(final, numero, posicao, cfg_img)
-                    self._save_figure_cache_disk(imagem, 720, fig_key_data, final)
+                    if rect:
+                        final = script.renderizar_figura_retangular(cropped, rect, cfg_img, numero, posicao)
+                    else:
+                        final = script.transformar_em_quadrado_com_margem(cropped, 720, cfg_img)
+                        script.desenhar_borda_preta(final, cfg_img)
+                        script.desenhar_numero_com_glow(final, numero, posicao, cfg_img)
+                    self._save_figure_cache_disk(imagem, figure_size, fig_key_data, final)
                 self.preview_cache[cache_key] = (
                     original.copy(),
                     cropped.copy(),
@@ -4301,7 +4390,7 @@ class PDFSheetUI:
             )
             self.root.after(0, lambda: self._apply_preview_result(req_id, o, c, f, info, backend_warning))
         except Exception as exc:
-            self.root.after(0, lambda: self.status_var.set(f"Erro no preview da imagem: {exc}"))
+            self.root.after(0, lambda message=str(exc): self.status_var.set(f"Erro no preview da imagem: {message}"))
             self.root.after(0, self._release_preview_lock)
 
     def _apply_preview_result(self, req_id, o, c, f, info, backend_warning=None):
@@ -4330,6 +4419,9 @@ class PDFSheetUI:
             self.preview_lock.release()
         if not self.render_lock.locked():
             self._stop_progress()
+        if self.preview_refresh_pending:
+            self.preview_refresh_pending = False
+            self.root.after(0, self._refresh_image_preview_async)
 
     def _refresh_image_preview(self):
         # Compatibilidade com chamadas antigas.
@@ -4343,27 +4435,39 @@ class PDFSheetUI:
         self.status_var.set("Renderizando prévia de página...")
         self.progress.configure(mode="indeterminate")
         self.progress.start(8)
-        threading.Thread(target=self._render_page_preview_worker, daemon=True).start()
+        cfg = self._get_config_ui()
+        figuras = list(self.imagens)
+        configs = {path: self._effective_config_for_image(path, cfg) for path in figuras}
+        key = self._page_cache_key(cfg)
+        threading.Thread(target=self._render_page_preview_worker, args=(cfg, figuras, configs, key), daemon=True).start()
 
-    def _render_page_preview_worker(self):
+    def _render_page_preview_worker(self, cfg=None, figuras=None, configs=None, page_key=None):
         try:
-            cfg = self._get_config_ui()
-            page_key = self._page_cache_key(cfg)
+            cfg = self._get_config_ui() if cfg is None else cfg
+            figuras = list(self.imagens) if figuras is None else figuras
+            page_key = self._page_cache_key(cfg) if page_key is None else page_key
             cached = self.page_cache.get(page_key)
+            should_save = False
             if cached is None:
-                patched = self._try_patch_dirty_page_cells(cfg)
+                patched = self._try_patch_dirty_page_cells(cfg, configs)
                 if patched is not None:
                     paginas, layout = patched
-                    self._save_pages_cache_disk(page_key, paginas, layout)
+                    should_save = True
                 else:
                     paginas, layout = self._load_pages_cache_disk(page_key)
                 if paginas is None:
-                    paginas, layout = self._criar_paginas_ui(self.imagens, cfg)
-                    self._save_pages_cache_disk(page_key, paginas, layout)
-                self.page_cache[page_key] = ([p.copy() for p in paginas], layout)
+                    paginas, layout = self._criar_paginas_ui(figuras, cfg, configs)
+                    should_save = True
             else:
                 paginas = [p.copy() for p in cached[0]]
                 layout = cached[1]
+            if page_key != self._page_cache_key(self._get_config_ui()):
+                self.root.after(0, self._render_page_preview_thread)
+                return
+            if should_save:
+                self._save_pages_cache_disk(page_key, paginas, layout)
+            if cached is None:
+                self.page_cache[page_key] = ([p.copy() for p in paginas], layout)
             self.paginas_cache = paginas
             self.page_layout_cache = layout
             self.page_layout_signature = self._page_layout_signature(cfg)
@@ -4372,12 +4476,13 @@ class PDFSheetUI:
                 self.indice_pagina_preview = max(0, len(paginas) - 1)
             self.root.after(0, self._update_page_preview_ui)
         except Exception as exc:
-            self.root.after(0, lambda: self.status_var.set(f"Erro na prévia de página: {exc}"))
+            self.root.after(0, lambda message=str(exc): self.status_var.set(f"Erro na prévia de página: {message}"))
         finally:
             self.root.after(0, self._stop_progress)
             self.render_lock.release()
 
     def _update_page_preview_ui(self):
+        self.layout_summary_var.set(page_layout.summary(self.page_layout_cache) or "Área calculada ao montar a folha.")
         if not self.paginas_cache:
             self.page_info_var.set("Página 0/0")
             self._clear_page_preview_canvas()
@@ -4482,6 +4587,11 @@ class PDFSheetUI:
             self._update_page_preview_ui()
 
     def _gerar_pdf_thread(self):
+        if self.global_sidebar_after_id is not None:
+            self.root.after_cancel(self.global_sidebar_after_id)
+            self.global_sidebar_after_id = None
+            if not self._apply_global_sidebar_change(render_preview=False):
+                return
         if not self.imagens:
             messagebox.showwarning("Aviso", "Nenhuma imagem encontrada.")
             return
@@ -4491,26 +4601,32 @@ class PDFSheetUI:
         self.status_var.set("Gerando PDF...")
         self.progress.configure(mode="indeterminate")
         self.progress.start(8)
-        threading.Thread(target=self._gerar_pdf_worker, daemon=True).start()
+        cfg = self._get_config_ui()
+        figuras = list(self.imagens)
+        configs = {path: self._effective_config_for_image(path, cfg) for path in figuras}
+        threading.Thread(target=self._gerar_pdf_worker, args=(cfg, figuras, configs), daemon=True).start()
 
-    def _gerar_pdf_worker(self):
+    def _gerar_pdf_worker(self, cfg=None, figuras=None, configs=None):
         try:
-            cfg = self._get_config_ui()
+            cfg = self._get_config_ui() if cfg is None else cfg
+            figuras = list(self.imagens) if figuras is None else figuras
             arquivo_saida = self.script_dir / cfg["arquivo_saida_pdf"]
             if bool(cfg.get("evitar_sobrescrever_pdf", True)):
                 arquivo_saida = script.obter_caminho_saida_disponivel(arquivo_saida)
 
-            paginas, _layout = self._criar_paginas_ui(self.imagens, cfg)
+            paginas, _layout = self._criar_paginas_ui(figuras, cfg, configs)
             arquivo_final = script.salvar_pdf(paginas, arquivo_saida)
+            area_summary = page_layout.summary(_layout)
+            self.root.after(0, lambda: self.layout_summary_var.set(area_summary or "Área calculada ao montar a folha."))
 
             if cfg.get("salvar_paginas_png", False):
                 script.salvar_paginas_png(paginas, self.script_dir)
 
             self.root.after(0, lambda: self.status_var.set(f"PDF gerado: {arquivo_final}"))
-            self.root.after(0, lambda: messagebox.showinfo("Concluído", f"PDF gerado em:\n{arquivo_final}"))
+            self.root.after(0, lambda: messagebox.showinfo("Concluído", f"PDF gerado em:\n{arquivo_final}" + (f"\n\n{area_summary}" if area_summary else "")))
         except Exception as exc:
-            self.root.after(0, lambda: messagebox.showerror("Erro", str(exc)))
-            self.root.after(0, lambda: self.status_var.set(f"Erro ao gerar PDF: {exc}"))
+            self.root.after(0, lambda message=str(exc): messagebox.showerror("Erro", message))
+            self.root.after(0, lambda message=str(exc): self.status_var.set(f"Erro ao gerar PDF: {message}"))
         finally:
             self.root.after(0, self._stop_progress)
             self.render_lock.release()
@@ -4533,6 +4649,7 @@ class PDFSheetUI:
 
     def _page_layout_signature(self, cfg: dict):
         return (
+            page_layout.signature(cfg),
             tuple(self._image_key(p) for p in self.imagens),
             tuple((p.stat().st_mtime_ns, p.stat().st_size) for p in self.imagens),
             int(cfg.get("figuras_por_pagina", 12)),
@@ -4542,7 +4659,10 @@ class PDFSheetUI:
             int(cfg.get("espaco_vertical", 30)),
         )
 
-    def _try_patch_dirty_page_cells(self, cfg: dict):
+    def _try_patch_dirty_page_cells(self, cfg: dict, configs=None):
+        if page_layout.automatic(cfg):
+            # A crop, margin or border change can alter the geometry of every card.
+            return None
         if not self.paginas_cache or not self.page_layout_cache or not self.dirty_page_images:
             return None
         if self.page_layout_signature != self._page_layout_signature(cfg):
@@ -4557,7 +4677,7 @@ class PDFSheetUI:
                 caminho = item["img"]
                 if self._image_key(caminho) not in self.dirty_page_images:
                     continue
-                cfg_img = self._effective_config_for_image(caminho, cfg)
+                cfg_img = configs[caminho] if configs is not None else self._effective_config_for_image(caminho, cfg)
                 figura = self._render_single_cell(caminho, int(item["size"]), cfg_img)
                 x = int(item["x"])
                 y = int(item["y"])
@@ -4568,7 +4688,7 @@ class PDFSheetUI:
             return None
         return paginas, layout
 
-    def _render_single_cell(self, caminho: Path, tamanho_quadrado: int, cfg_img: dict):
+    def _load_prepared_image(self, caminho: Path, cfg_img: dict):
         raw_key = self._raw_cache_key(caminho, cfg_img)
         raw = self.raw_cache.get(raw_key)
         if raw is None:
@@ -4594,6 +4714,11 @@ class PDFSheetUI:
             self.raw_cache[raw_key] = (original.copy(), cropped.copy(), numero, posicao)
         else:
             _original, cropped, numero, posicao = raw[0].copy(), raw[1].copy(), raw[2], raw[3]
+        return cropped
+
+    def _render_single_cell(self, caminho: Path, tamanho_quadrado, cfg_img: dict, rect=None):
+        cropped = self._load_prepared_image(caminho, cfg_img)
+        raw_key = self._raw_cache_key(caminho, cfg_img)
         numero, posicao = script.interpretar_nome_arquivo(caminho, cfg_img)
 
         fig_key = (
@@ -4624,15 +4749,37 @@ class PDFSheetUI:
         fig_key_data = self._figure_key_data(caminho, cfg_img, tamanho_quadrado, numero, posicao)
         figura_rgba = self._load_figure_cache_disk(caminho, tamanho_quadrado, fig_key_data)
         if figura_rgba is None:
-            figura_rgba = script.transformar_em_quadrado_com_margem(cropped.copy(), tamanho_quadrado, cfg_img)
-            script.desenhar_borda_preta(figura_rgba, cfg_img)
-            script.desenhar_numero_com_glow(figura_rgba, numero, posicao, cfg_img)
+            if rect is not None:
+                figura_rgba = script.renderizar_figura_retangular(cropped, rect, cfg_img, numero, posicao)
+            else:
+                figura_rgba = script.transformar_em_quadrado_com_margem(cropped.copy(), tamanho_quadrado, cfg_img)
+                script.desenhar_borda_preta(figura_rgba, cfg_img)
+                script.desenhar_numero_com_glow(figura_rgba, numero, posicao, cfg_img)
             self._save_figure_cache_disk(caminho, tamanho_quadrado, fig_key_data, figura_rgba)
         figura = figura_rgba.convert("RGB")
         self.figure_cache[fig_key] = figura.copy()
         return figura
 
-    def _criar_paginas_ui(self, figuras, cfg):
+    def _criar_paginas_ui(self, figuras, cfg, configs=None):
+        configs = {path: self._effective_config_for_image(path, cfg) for path in figuras} if configs is None else configs
+        if page_layout.automatic(cfg):
+            page_layout.validate(cfg, script.obter_tamanho_pagina(cfg))
+            items = []
+            for caminho in figuras:
+                cfg_img = configs[caminho]
+                cropped = self._load_prepared_image(caminho, cfg_img)
+                items.append({"img": caminho, "source_size": cropped.size, "config": cfg_img})
+            layouts = page_layout.arrange(items, script.obter_tamanho_pagina(cfg), cfg)
+            paginas = []
+            for rects in layouts:
+                pagina = Image.new("RGB", script.obter_tamanho_pagina(cfg), "white")
+                for rect in rects:
+                    size = (rect["width"], rect["height"], rect["content_width"], rect["content_height"], rect["rotation"])
+                    figura = self._render_single_cell(rect["img"], size, configs[rect["img"]], rect)
+                    pagina.paste(figura, (rect["x"], rect["y"]))
+                paginas.append(pagina)
+            return paginas, layouts
+
         paginas = []
         layout_paginas = []
 
@@ -4656,7 +4803,7 @@ class PDFSheetUI:
             pagina = Image.new("RGB", (pagina_largura, pagina_altura), (255, 255, 255))
             layout = []
             for indice, caminho in enumerate(lote):
-                cfg_img = self._effective_config_for_image(caminho, cfg)
+                cfg_img = configs[caminho]
                 figura = self._render_single_cell(caminho, tamanho_quadrado, cfg_img)
 
                 linha = indice // colunas
@@ -4692,8 +4839,9 @@ class PDFSheetUI:
         for item in self.page_layout_cache[self.indice_pagina_preview]:
             x = item["x"]
             y = item["y"]
-            s = item["size"]
-            if x <= px <= x + s and y <= py <= y + s:
+            w = item.get("width", item.get("size", 0))
+            h = item.get("height", item.get("size", 0))
+            if x <= px < x + w and y <= py < y + h:
                 self._select_image_in_list(item["img"])
                 return
 
@@ -4726,6 +4874,7 @@ class PDFSheetUI:
         st = imagem.stat()
         return (
             CACHE_SCHEMA_VERSION,
+            cfg.get("modo_layout", "grid"),
             script.normalizar_chave_imagem(imagem),
             st.st_mtime_ns,
             st.st_size,
@@ -4816,6 +4965,7 @@ class PDFSheetUI:
         )
         return (
             CACHE_SCHEMA_VERSION,
+            page_layout.signature(cfg),
             img_sig,
             ov_sig,
             int(cfg.get("figuras_por_pagina", 12)),
@@ -4926,10 +5076,11 @@ class PDFSheetUI:
     def _image_hash(imagem: Path):
         return hashlib.sha1(script.normalizar_chave_imagem(imagem).encode("utf-8")).hexdigest()
 
-    def _figure_cache_paths(self, imagem: Path, tamanho: int):
+    def _figure_cache_paths(self, imagem: Path, tamanho):
         h = self._image_hash(imagem)
-        img_file = self.figures_cache_dir / f"{h}_{tamanho}.png"
-        meta_file = self.figures_cache_dir / f"{h}_{tamanho}.json"
+        tag = "x".join(str(value) for value in tamanho) if isinstance(tamanho, tuple) else str(tamanho)
+        img_file = self.figures_cache_dir / f"{h}_{tag}.png"
+        meta_file = self.figures_cache_dir / f"{h}_{tag}.json"
         return img_file, meta_file
 
     def _figure_key_data(self, imagem: Path, cfg: dict, tamanho: int, numero: str, posicao: str):
@@ -4940,7 +5091,8 @@ class PDFSheetUI:
             "image": self._image_key(imagem),
             "mtime": int(st.st_mtime_ns),
             "size": int(st.st_size),
-            "tamanho": int(tamanho),
+            "tamanho": list(tamanho) if isinstance(tamanho, tuple) else int(tamanho),
+            "modo_layout": cfg.get("modo_layout", "grid"),
             "numero": str(numero),
             "posicao": str(posicao),
             "margem_interna_quadrado": float(cfg.get("margem_interna_quadrado", 0.06)),
@@ -5047,7 +5199,7 @@ class PDFSheetUI:
                             "img": str(item["img"]),
                             "x": int(item["x"]),
                             "y": int(item["y"]),
-                            "size": int(item["size"]),
+                            **{key: int(item[key]) for key in ("size", "width", "height", "content_width", "content_height", "rotation") if key in item},
                         }
                         for item in page_layout
                     ]
@@ -5110,7 +5262,7 @@ class PDFSheetUI:
                             "img": Path(item["img"]),
                             "x": int(item["x"]),
                             "y": int(item["y"]),
-                            "size": int(item["size"]),
+                            **{key: int(item[key]) for key in ("size", "width", "height", "content_width", "content_height", "rotation") if key in item},
                         }
                         for item in page_layout
                     ]

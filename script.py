@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import math
 import ntpath
 import os
 import re
@@ -9,6 +10,8 @@ import tempfile
 import threading
 from collections import deque
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
+
+import layout as page_layout
 
 APP_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 MODELS_ROOT = APP_ROOT / "models"
@@ -130,6 +133,13 @@ CONFIG_PADRAO = {
 
     # Opções aceitas: 12, 9, 6 ou 4
     "figuras_por_pagina": 12,
+    "modo_layout": "grid",
+    "encaixe_figuras_por_pagina": 12,
+    "encaixe_mesma_area": False,
+    "encaixe_area_max_cm2": 0.0,
+    "encaixe_largura_max_cm": 0.0,
+    "encaixe_altura_max_cm": 0.0,
+    "encaixe_permitir_giro": False,
 
     # Opções aceitas: "horizontal" ou "vertical"
     "orientacao": "horizontal",
@@ -990,7 +1000,7 @@ def desenhar_borda_preta(img_rgba, config):
     )
 
 
-def desenhar_numero_com_glow(img_rgba, texto, posicao, config):
+def desenhar_numero_com_glow(img_rgba, texto, posicao, config, referencia_tamanho=None):
     draw = ImageDraw.Draw(img_rgba)
     w, h = img_rgba.size
 
@@ -1003,7 +1013,20 @@ def desenhar_numero_com_glow(img_rgba, texto, posicao, config):
     glow_opacidade = int(config.get("numero_glow_opacidade", 220))
     glow_opacidade = max(0, min(255, glow_opacidade))
 
-    tamanho_fonte = max(18, int(w * tamanho_relativo))
+    tamanho_fonte = max(18, int((w if referencia_tamanho is None else referencia_tamanho) * tamanho_relativo))
+    if referencia_tamanho is not None:
+        # Rectangular cards can be narrow: keep the complete label inside them.
+        inset_limite = max(0, borda_espessura) + max(0, padding_numero)
+        padding_x = min(padding_x, max(0, (w - 2 * inset_limite - 1) // 2))
+        padding_y = min(padding_y, max(0, (h - 2 * inset_limite - 1) // 2))
+        available_w = max(1, w - 2 * inset_limite - 2 * padding_x)
+        available_h = max(1, h - 2 * inset_limite - 2 * padding_y)
+        while tamanho_fonte > 1:
+            font_test = carregar_fonte(tamanho_fonte)
+            text_box = draw.textbbox((0, 0), texto, font=font_test)
+            if text_box[2] - text_box[0] <= available_w and text_box[3] - text_box[1] <= available_h:
+                break
+            tamanho_fonte = max(1, tamanho_fonte - max(1, tamanho_fonte // 10))
     fonte = carregar_fonte(tamanho_fonte)
 
     bbox_texto = draw.textbbox((0, 0), texto, font=fonte)
@@ -1033,6 +1056,10 @@ def desenhar_numero_com_glow(img_rgba, texto, posicao, config):
 
     texto_x = x1 + padding_x
     texto_y = y1 + padding_y - 1
+    if referencia_tamanho is not None:
+        # Account for font bearings rather than letting descenders cross the frame.
+        texto_x = max(0, min(w - largura_texto, texto_x)) - bbox_texto[0]
+        texto_y = max(0, min(h - altura_texto, y1 + padding_y)) - bbox_texto[1]
 
     camada_glow = Image.new("RGBA", img_rgba.size, (0, 0, 0, 0))
     draw_glow = ImageDraw.Draw(camada_glow)
@@ -1054,6 +1081,41 @@ def desenhar_numero_com_glow(img_rgba, texto, posicao, config):
         fill=str(config.get("cor_numero", "#000000")),
         font=fonte
     )
+
+
+def preparar_imagem_recortada(caminho_imagem, config):
+    with Image.open(caminho_imagem) as img:
+        img = reduzir_para_processamento(img, config)
+        img = aplicar_remocao_fundo(img, caminho_imagem, config)
+        return cortar_espacos_brancos(img, config)
+
+
+def renderizar_figura_retangular(cropped, rect, config, numero, posicao):
+    if rect.get("rotation", 0) == 90:
+        cropped = cropped.transpose(Image.Transpose.ROTATE_270)
+    cw, ch = int(rect["content_width"]), int(rect["content_height"])
+    w, h = int(rect["width"]), int(rect["height"])
+    image = cropped.resize((cw, ch), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", (w, h), (255, 255, 255, 255))
+    inset = max(0, int(config.get("borda_preta_espessura", 8))) + 1
+    x = (w - cw) // 2 + round(w * int(config.get("deslocamento_x", 0)) / 100)
+    y = (h - ch) // 2 + round(h * int(config.get("deslocamento_y", 0)) / 100)
+    x = max(inset, min(w - inset - cw, x))
+    y = max(inset, min(h - inset - ch, y))
+    canvas.paste(image, (x, y), image)
+    desenhar_borda_preta(canvas, config)
+    desenhar_numero_com_glow(canvas, numero, posicao, config, math.sqrt(cw * ch))
+    return canvas
+
+
+def retangulo_preview(cropped, config, lado=720):
+    item = {"source_size": cropped.size, "config": config}
+    scale = lado / math.sqrt(max(cropped.width / cropped.height, cropped.height / cropped.width))
+    rect = page_layout.dimensions(item, scale)
+    while max(rect["width"], rect["height"]) > lado and scale > 1:
+        scale *= 0.9
+        rect = page_layout.dimensions(item, scale)
+    return rect
 
 
 def preparar_figura(caminho_imagem, tamanho_quadrado, config, overrides=None):
@@ -1084,6 +1146,28 @@ def preparar_figura(caminho_imagem, tamanho_quadrado, config, overrides=None):
 
 
 def criar_paginas(figuras, config, overrides=None):
+    if page_layout.automatic(config):
+        page_layout.validate(config, obter_tamanho_pagina(config))
+        prepared = {}
+        items = []
+        for caminho in figuras:
+            cfg_img = obter_config_efetiva_imagem(caminho, config, overrides)
+            cropped = preparar_imagem_recortada(caminho, cfg_img)
+            prepared[caminho] = cropped, cfg_img
+            items.append({"img": caminho, "source_size": cropped.size, "config": cfg_img})
+        layouts = page_layout.arrange(items, obter_tamanho_pagina(config), config)
+        paginas = []
+        for rects in layouts:
+            pagina = Image.new("RGB", obter_tamanho_pagina(config), "white")
+            for rect in rects:
+                cropped, cfg_img = prepared[rect["img"]]
+                numero, posicao = interpretar_nome_arquivo(rect["img"], cfg_img)
+                figura = renderizar_figura_retangular(cropped, rect, cfg_img, numero, posicao)
+                pagina.paste(figura.convert("RGB"), (rect["x"], rect["y"]))
+            paginas.append(pagina)
+        print(page_layout.summary(layouts))
+        return paginas
+
     paginas = []
 
     pagina_largura, pagina_altura = obter_tamanho_pagina(config)
@@ -1216,12 +1300,15 @@ def main():
         print(f"Extensões aceitas: {', '.join(sorted(EXTENSOES_ACEITAS))}")
         return
 
-    colunas, linhas = obter_grade(config["figuras_por_pagina"], config.get("orientacao"))
-
     print()
     print(f"Foram encontradas {len(imagens)} imagens.")
-    print(f"Formato escolhido: {config['figuras_por_pagina']} figuras por página.")
-    print(f"Grade: {colunas} colunas x {linhas} linhas.")
+    if page_layout.automatic(config):
+        print(f"Encaixe automático: {config['encaixe_figuras_por_pagina']} figuras por página.")
+        print("Mesma área em todo o PDF." if config.get("encaixe_mesma_area") else "Tamanhos livres.")
+    else:
+        colunas, linhas = obter_grade(config["figuras_por_pagina"], config.get("orientacao"))
+        print(f"Formato escolhido: {config['figuras_por_pagina']} figuras por página.")
+        print(f"Grade: {colunas} colunas x {linhas} linhas.")
     print(f"Orientação: {config['orientacao']}.")
     print()
 
