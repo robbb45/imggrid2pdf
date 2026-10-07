@@ -39,6 +39,7 @@ IMAGE_OVERRIDE_KEYS = (
     "deslocamento_x",
     "deslocamento_y",
     "borda_preta_espessura",
+    "mostrar_borda",
     "estilo_borda",
     "raio_borda",
     "tamanho_numero_relativo",
@@ -723,6 +724,7 @@ class PDFSheetUI:
             "espaco_horizontal": "Espaço horizontal entre células da grade (em pixels).",
             "espaco_vertical": "Espaço vertical entre células da grade (em pixels).",
             "borda_preta_espessura": "Espessura da borda de recorte em cada célula (em pixels).",
+            "mostrar_borda": "Mostra ou oculta a borda nas prévias e no PDF. Ao ocultar, o recorte dos cantos arredondados também é desativado. Os ajustes de cor, espessura e estilo ficam salvos para reativar a borda.",
             "estilo_borda": "Estilo da borda de recorte da imagem: sólida ou tracejada.",
             "raio_borda": "Arredondamento dos cantos da borda de recorte (em pixels).",
             "margem_interna_quadrado": "Margem interna da imagem dentro da moldura (0.00 a 0.25).",
@@ -766,6 +768,7 @@ class PDFSheetUI:
 
         self.apply_all_label_keys = {
             "borda_preta_espessura",
+            "mostrar_borda",
             "estilo_borda",
             "raio_borda",
             "margem_interna_quadrado",
@@ -1052,6 +1055,12 @@ class PDFSheetUI:
 
         row = 0
 
+        make_apply_all_label(control_parent, "Borda", "mostrar_borda", row)
+        self.vars["mostrar_borda"] = tk.BooleanVar(value=bool(self.config.get("mostrar_borda", True)))
+        self.show_border_check = ttk.Checkbutton(control_parent, text="Mostrar", variable=self.vars["mostrar_borda"])
+        self.show_border_check.grid(row=row, column=1, sticky="w", pady=3)
+        self._bind_tooltip(self.show_border_check, "mostrar_borda")
+        row += 1
         frame_borda = add_slider_int("Espessura borda", "borda_preta_espessura", row, 1, 30, apply_all=True)
         add_inline_color(frame_borda, "cor_borda")
         row += 1
@@ -2454,6 +2463,7 @@ class PDFSheetUI:
     def _confirm_apply_to_other_images(self, keys, image_count):
         labels = {
             "borda_preta_espessura": "espessura da borda",
+            "mostrar_borda": "visibilidade da borda",
             "cor_borda": "cor da borda",
             "estilo_borda": "estilo da borda",
             "raio_borda": "raio da borda",
@@ -3268,12 +3278,14 @@ class PDFSheetUI:
         update_backend_groups()
 
         bool_vars = {
+            "mostrar_borda": tk.BooleanVar(value=bool(self.global_cfg.get("mostrar_borda", True))),
             "mostrar_numero": tk.BooleanVar(value=bool(self.global_cfg.get("mostrar_numero", True))),
             "evitar_sobrescrever_pdf": tk.BooleanVar(value=bool(self.global_cfg.get("evitar_sobrescrever_pdf", True))),
             "salvar_paginas_png": tk.BooleanVar(value=bool(self.global_cfg.get("salvar_paginas_png", False))),
             "auto_preview_pagina": tk.BooleanVar(value=bool(self.global_cfg.get("auto_preview_pagina", False))),
         }
         for key, text in [
+            ("mostrar_borda", "Mostrar borda nas imagens"),
             ("mostrar_numero", "Mostrar número/nome nas imagens"),
             ("evitar_sobrescrever_pdf", "Não sobrescrever PDF"),
             ("salvar_paginas_png", "Salvar páginas PNG"),
@@ -4739,6 +4751,7 @@ class PDFSheetUI:
             str(numero),
             str(posicao),
             int(cfg_img.get("borda_preta_espessura", 8)),
+            bool(cfg_img.get("mostrar_borda", True)),
             str(cfg_img.get("estilo_borda", "solida")),
             int(cfg_img.get("raio_borda", 0)),
             float(cfg_img.get("margem_interna_quadrado", 0.06)),
@@ -4907,6 +4920,7 @@ class PDFSheetUI:
             int(cfg.get("deslocamento_x", 0)),
             int(cfg.get("deslocamento_y", 0)),
             int(cfg.get("borda_preta_espessura", 8)),
+            bool(cfg.get("mostrar_borda", True)),
             str(cfg.get("estilo_borda", "solida")),
             int(cfg.get("raio_borda", 0)),
             float(cfg.get("tamanho_numero_relativo", 0.085)),
@@ -5031,6 +5045,7 @@ class PDFSheetUI:
             int(cfg.get("deslocamento_x", 0)),
             int(cfg.get("deslocamento_y", 0)),
             int(cfg.get("borda_preta_espessura", 8)),
+            bool(cfg.get("mostrar_borda", True)),
             str(cfg.get("estilo_borda", "solida")),
             int(cfg.get("raio_borda", 0)),
             float(cfg.get("tamanho_numero_relativo", 0.085)),
@@ -5114,6 +5129,7 @@ class PDFSheetUI:
             "deslocamento_x": int(cfg.get("deslocamento_x", 0)),
             "deslocamento_y": int(cfg.get("deslocamento_y", 0)),
             "borda_preta_espessura": int(cfg.get("borda_preta_espessura", 8)),
+            "mostrar_borda": bool(cfg.get("mostrar_borda", True)),
             "estilo_borda": str(cfg.get("estilo_borda", "solida")),
             "raio_borda": int(cfg.get("raio_borda", 0)),
             "tamanho_numero_relativo": float(cfg.get("tamanho_numero_relativo", 0.085)),

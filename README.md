@@ -19,6 +19,8 @@ A prévia informa a área resultante das figuras em cm². O algoritmo testa dife
 
 Para ocultar o número ou nome no canto, desmarque **Número/nome → Mostrar** nos ajustes da imagem. Isso oculta também o brilho atrás do texto, tanto nas prévias quanto no PDF, nos dois modos de composição. Dê duplo clique no nome do ajuste para aplicar às outras imagens, ou altere o padrão em **Configurações Globais → Mostrar número/nome nas imagens**.
 
+Para desativar a borda, desmarque **Borda → Mostrar**. A opção funciona nos dois modos, nas prévias e no PDF, e também desativa o recorte dos cantos arredondados. Os ajustes de espessura, cor e estilo são preservados. Dê duplo clique em **Borda** para aplicar às outras imagens, ou altere o padrão em **Configurações Globais → Mostrar borda nas imagens**.
+
 ## Verificação
 
 Com Pillow instalado:

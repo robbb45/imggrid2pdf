@@ -149,6 +149,7 @@ CONFIG_PADRAO = {
     "espaco_vertical": 30,
 
     "borda_preta_espessura": 8,
+    "mostrar_borda": True,
     "estilo_borda": "solida",
     "raio_borda": 0,
     "cor_borda": "#000000",
@@ -885,6 +886,8 @@ def transformar_em_quadrado_com_margem(img_rgba, tamanho_saida, config):
 
 
 def desenhar_borda_preta(img_rgba, config):
+    if not bool(config.get("mostrar_borda", True)):
+        return
     espessura = int(config["borda_preta_espessura"])
     estilo = str(config.get("estilo_borda", "solida")).strip().lower()
     if estilo not in listar_estilos_borda():

@@ -200,14 +200,15 @@ class RenderingTests(unittest.TestCase):
                     script.desenhar_numero_com_glow(visible, text, "superior_esquerdo", self.cfg, reference)
                     self.assertIsNotNone(ImageChops.difference(visible.convert("RGB"), original.convert("RGB")).getbbox())
 
-    def test_number_visibility_invalidates_cache_and_restores_labels(self):
-        for mode in ("grid", "encaixe"):
-            with self.subTest(mode=mode):
-                cfg = {**self.cfg, "modo_layout": mode, "figuras_por_pagina": 4, "mostrar_numero": True}
+    def test_visibility_invalidates_cache_and_restores_rendering(self):
+        for mode, visibility in ((mode, key) for mode in ("grid", "encaixe")
+                                 for key in ("mostrar_numero", "mostrar_borda")):
+            with self.subTest(mode=mode, visibility=visibility):
+                cfg = {**self.cfg, "modo_layout": mode, "figuras_por_pagina": 4, visibility: True}
                 self.app.global_cfg = cfg
                 visible, visible_layout = self.app._criar_paginas_ui(self.paths, cfg)
                 visible_key = self.app._page_cache_key(cfg)
-                hidden_cfg = {**cfg, "mostrar_numero": False}
+                hidden_cfg = {**cfg, visibility: False}
                 self.app.global_cfg = hidden_cfg
                 hidden, hidden_layout = self.app._criar_paginas_ui(self.paths, hidden_cfg)
                 self.assertEqual(visible_layout, hidden_layout)
@@ -218,10 +219,19 @@ class RenderingTests(unittest.TestCase):
                 self.app.global_cfg = cfg
                 restored, _ = self.app._criar_paginas_ui(self.paths, cfg)
                 self.assertTrue(all(ImageChops.difference(a, b).getbbox() is None for a, b in zip(visible, restored)))
-                self.app.image_overrides = {self.app._image_key(self.paths[0]): {"mostrar_numero": False}}
-                self.assertFalse(self.app._effective_config_for_image(self.paths[0], cfg)["mostrar_numero"])
-                self.assertTrue(self.app._effective_config_for_image(self.paths[1], cfg)["mostrar_numero"])
+                self.app.image_overrides = {self.app._image_key(self.paths[0]): {visibility: False}}
+                self.assertFalse(self.app._effective_config_for_image(self.paths[0], cfg)[visibility])
+                self.assertTrue(self.app._effective_config_for_image(self.paths[1], cfg)[visibility])
                 self.app.image_overrides = {}
+
+    def test_hidden_border_preserves_content_at_rounded_corners(self):
+        image = Image.new("RGBA", (200, 100), (50, 100, 150, 255))
+        for style in script.listar_estilos_borda():
+            with self.subTest(style=style):
+                hidden = image.copy()
+                script.desenhar_borda_preta(hidden, {**self.cfg, "mostrar_borda": False,
+                                                    "raio_borda": 35, "estilo_borda": style})
+                self.assertEqual(hidden.tobytes(), image.tobytes())
 
     def test_rectangle_click_selection(self):
         self.app.paginas_cache = [Image.new("RGB", (300, 200))]
@@ -331,6 +341,10 @@ class RenderingTests(unittest.TestCase):
              patch.object(ui.PDFSheetUI, "_save_config"), patch.object(ui.PDFSheetUI, "_refresh_image_preview_async"), \
              patch.object(ui.PDFSheetUI, "_render_page_preview_thread"):
             app = ui.PDFSheetUI(root)
+            self.assertTrue(app.vars["mostrar_borda"].get())
+            app.show_border_check.invoke()
+            self.assertFalse(app.vars["mostrar_borda"].get())
+            self.assertIs(app._collect_image_override_cfg()["mostrar_borda"], False)
             self.assertTrue(app.vars["mostrar_numero"].get())
             app.show_number_check.invoke()
             self.assertFalse(app.vars["mostrar_numero"].get())
