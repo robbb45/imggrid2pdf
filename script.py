@@ -1097,10 +1097,14 @@ def preparar_imagem_recortada(caminho_imagem, config):
 
 
 def renderizar_figura_retangular(cropped, rect, config, numero, posicao):
-    if rect.get("rotation", 0) == 90:
-        cropped = cropped.transpose(Image.Transpose.ROTATE_270)
+    rotate = rect.get("rotation", 0) == 90
     cw, ch = int(rect["content_width"]), int(rect["content_height"])
     w, h = int(rect["width"]), int(rect["height"])
+    if rotate:
+        # Render in the image's original orientation so corners, text and glow
+        # remain attached to it when the complete card turns clockwise.
+        cw, ch = ch, cw
+        w, h = h, w
     image = cropped.resize((cw, ch), Image.Resampling.LANCZOS)
     canvas = Image.new("RGBA", (w, h), (255, 255, 255, 255))
     inset = max(0, int(config.get("borda_preta_espessura", 8))) + 1
@@ -1111,7 +1115,7 @@ def renderizar_figura_retangular(cropped, rect, config, numero, posicao):
     canvas.paste(image, (x, y), image)
     desenhar_borda_preta(canvas, config)
     desenhar_numero_com_glow(canvas, numero, posicao, config, math.sqrt(cw * ch))
-    return canvas
+    return canvas.transpose(Image.Transpose.ROTATE_270) if rotate else canvas
 
 
 def retangulo_preview(cropped, config, lado=720):

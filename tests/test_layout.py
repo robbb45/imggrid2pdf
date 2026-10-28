@@ -187,6 +187,66 @@ class RenderingTests(unittest.TestCase):
             result = script.renderizar_figura_retangular(cropped, rect, cfg_style, "123456", "inferior_direito")
             self.assertEqual(result.size, (rect["width"], rect["height"]))
 
+    def test_rotated_card_keeps_labels_and_corners_relative_to_image(self):
+        cropped = Image.new("RGBA", (280, 100), (45, 120, 175, 255))
+        ImageDraw.Draw(cropped).rectangle((10, 10, 60, 40), fill=(225, 90, 25, 255))
+        for position in ("superior_esquerdo", "superior_direito", "inferior_esquerdo", "inferior_direito"):
+            for border, number in ((True, True), (False, True), (True, False), (False, False)):
+                with self.subTest(position=position, border=border, number=number):
+                    cfg = {**self.cfg, "mostrar_borda": border, "mostrar_numero": number,
+                           "raio_borda": 20, "deslocamento_x": 8, "deslocamento_y": -8}
+                    item = {"source_size": cropped.size, "config": cfg}
+                    plain_rect = layout.dimensions(item, 180)
+                    rotated_rect = layout.dimensions(item, 180, rotate=True)
+                    original = script.renderizar_figura_retangular(cropped, plain_rect, cfg, "123 AB", position)
+                    rotated = script.renderizar_figura_retangular(cropped, rotated_rect, cfg, "123 AB", position)
+                    # Turning the sheet back must restore the entire card,
+                    # including text, its glow, border and content alignment.
+                    restored = rotated.transpose(Image.Transpose.ROTATE_90)
+                    self.assertEqual(rotated.size, original.size[::-1])
+                    self.assertIsNone(ImageChops.difference(original.convert("RGB"), restored.convert("RGB")).getbbox())
+
+    def test_automatic_page_rotates_complete_card_in_editor_and_export(self):
+        paths = self.paths[:1]
+        cfg = {**self.cfg, "encaixe_figuras_por_pagina": 1,
+               "encaixe_permitir_giro": True, "margem_externa": 20}
+        self.app.global_cfg = cfg
+        with patch.object(script, "obter_tamanho_pagina", return_value=(600, 1000)):
+            editor, pages_layout = self.app._criar_paginas_ui(paths, cfg)
+            exported = script.criar_paginas(paths, cfg)
+        self.assertIsNone(ImageChops.difference(editor[0], exported[0]).getbbox())
+        rect = pages_layout[0][0]
+        self.assertEqual(rect["rotation"], 90)
+        unturned_rect = {**rect, "rotation": 0, "width": rect["height"], "height": rect["width"],
+                         "content_width": rect["content_height"], "content_height": rect["content_width"]}
+        cropped = self.app._load_prepared_image(paths[0], cfg)
+        number, position = script.interpretar_nome_arquivo(paths[0], cfg)
+        original = script.renderizar_figura_retangular(cropped, unturned_rect, cfg, number, position)
+        region = editor[0].crop((rect["x"], rect["y"], rect["x"] + rect["width"], rect["y"] + rect["height"]))
+        self.assertIsNone(ImageChops.difference(region, original.transpose(Image.Transpose.ROTATE_270).convert("RGB")).getbbox())
+
+    def test_render_revision_rejects_stale_figures_and_pages_but_keeps_raw_cache(self):
+        path = self.paths[0]
+        cropped = self.app._load_prepared_image(path, self.cfg)
+        rect = layout.dimensions({"source_size": cropped.size, "config": self.cfg}, 180, rotate=True)
+        size = (rect["width"], rect["height"], rect["content_width"], rect["content_height"], rect["rotation"])
+        stale = Image.new("RGBA", (rect["width"], rect["height"]), "black")
+        with patch.object(ui, "FIGURE_RENDER_VERSION", 0), \
+             patch.object(script, "renderizar_figura_retangular", return_value=stale):
+            old_figure = self.app._render_single_cell(path, size, self.cfg, rect)
+            old_page_key = self.app._page_cache_key(self.cfg)
+            old_preview_key = self.app._preview_cache_key(path, self.cfg)
+            raw_key = self.app._raw_cache_key(path, self.cfg)
+            self.app._save_pages_cache_disk(old_page_key, [old_figure], [[{"img": path, "x": 0, "y": 0, **rect}]])
+        new_meta = self.app._figure_key_data(path, self.cfg, size, *script.interpretar_nome_arquivo(path, self.cfg))
+        self.assertIsNone(self.app._load_figure_cache_disk(path, size, new_meta))
+        self.assertEqual(self.app._load_pages_cache_disk(self.app._page_cache_key(self.cfg)), (None, None))
+        self.assertNotEqual(self.app._page_cache_key(self.cfg), old_page_key)
+        self.assertNotEqual(self.app._preview_cache_key(path, self.cfg), old_preview_key)
+        self.assertEqual(self.app._raw_cache_key(path, self.cfg), raw_key)
+        new_figure = self.app._render_single_cell(path, size, self.cfg, rect)
+        self.assertIsNotNone(ImageChops.difference(new_figure, old_figure).getbbox())
+
     def test_hidden_number_or_name_does_not_draw_text_or_glow(self):
         for text in ("01", "Nome da imagem"):
             for reference in (None, 200):

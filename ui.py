@@ -62,6 +62,7 @@ BACKEND_SELECTION_KEYS = (
 )
 
 CACHE_SCHEMA_VERSION = 4
+FIGURE_RENDER_VERSION = 1
 
 
 class ToolTip:
@@ -735,7 +736,7 @@ class PDFSheetUI:
             "encaixe_area_max_cm2": "Limite opcional da área da figura impressa, sem a borda e a margem interna. Zero deixa o programa escolher o maior tamanho que cabe.",
             "encaixe_largura_max_cm": "Limite opcional da largura da figura impressa, sem borda e margem interna. Zero significa sem limite adicional.",
             "encaixe_altura_max_cm": "Limite opcional da altura da figura impressa, sem borda e margem interna. Zero significa sem limite adicional.",
-            "encaixe_permitir_giro": "Permite girar imagens 90° para melhorar o encaixe. A numeração é desenhada depois do giro e continua legível.",
+            "encaixe_permitir_giro": "Permite girar imagens 90° para melhorar o encaixe. O número/nome e seu brilho giram junto com a imagem, mantendo o canto escolhido em relação a ela.",
             "tamanho_numero_relativo": "Tamanho do número relativo ao tamanho da célula.",
             "mostrar_numero": "Mostra ou oculta o número/nome e seu brilho na imagem. Vale para as prévias e o PDF. Duplo clique no nome do ajuste permite aplicar às outras imagens.",
             "padding_numero": "Distância do número em relação à borda interna da célula.",
@@ -4746,6 +4747,7 @@ class PDFSheetUI:
         numero, posicao = script.interpretar_nome_arquivo(caminho, cfg_img)
 
         fig_key = (
+            FIGURE_RENDER_VERSION,
             raw_key,
             tamanho_quadrado,
             str(numero),
@@ -4900,6 +4902,7 @@ class PDFSheetUI:
         st = imagem.stat()
         return (
             CACHE_SCHEMA_VERSION,
+            FIGURE_RENDER_VERSION,
             cfg.get("modo_layout", "grid"),
             script.normalizar_chave_imagem(imagem),
             st.st_mtime_ns,
@@ -4993,6 +4996,7 @@ class PDFSheetUI:
         )
         return (
             CACHE_SCHEMA_VERSION,
+            FIGURE_RENDER_VERSION,
             page_layout.signature(cfg),
             img_sig,
             ov_sig,
@@ -5117,6 +5121,7 @@ class PDFSheetUI:
         st = imagem.stat()
         return {
             "cache_schema_version": CACHE_SCHEMA_VERSION,
+            "figure_render_version": FIGURE_RENDER_VERSION,
             "rounded_border_clip_version": 1,
             "image": self._image_key(imagem),
             "mtime": int(st.st_mtime_ns),

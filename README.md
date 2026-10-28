@@ -13,7 +13,7 @@ O Encaixe automático usa tamanhos livres por padrão, procurando ampliar cada f
 
 **Área máxima (cm²)**, **Largura máx. (cm)** e **Altura máx. (cm)** são limites opcionais. Zero significa automático. Os limites se referem à figura, sem a moldura e a margem interna. Com a mesma área ativada, uma restrição em uma figura pode reduzir o tamanho do conjunto para manter a padronização.
 
-O giro de 90° é opcional e fica desativado por padrão. As bordas, seus estilos e cantos, as cores, a numeração com brilho, a remoção de fundo, as margens internas e os deslocamentos continuam disponíveis por imagem. O encaixe apenas redimensiona e posiciona: o tratamento de fundo e o recorte de espaços em branco usam os controles existentes.
+O giro de 90° é opcional e fica desativado por padrão. O número/nome e seu brilho giram junto com a imagem, mantendo o canto escolhido em relação a ela. As bordas, seus estilos e cantos, as cores, a numeração com brilho, a remoção de fundo, as margens internas e os deslocamentos continuam disponíveis por imagem. O encaixe apenas redimensiona e posiciona: o tratamento de fundo e o recorte de espaços em branco usam os controles existentes.
 
 A prévia informa a área resultante das figuras em cm². O algoritmo testa diferentes encaixes MaxRects e escalas; procura um bom aproveitamento, sem garantir o ótimo matemático ou o preenchimento integral da folha.
 
